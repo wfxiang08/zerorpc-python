@@ -104,6 +104,9 @@ class Context(zmq.Context):
         self._msg_id_counter_stop = random.randrange(self._msg_id_counter, 2 ** 32)
 
     def new_msgid(self):
+        """
+            生成msgid, 在某个窗口内部；如果id消耗完毕，则重新创建一个新的窗口
+        """
         if self._msg_id_counter >= self._msg_id_counter_stop:
             self._reset_msgid()
         else:

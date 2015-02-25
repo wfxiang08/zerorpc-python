@@ -40,6 +40,7 @@ def test_client_server_hearbeat():
         def slow(self):
             gevent.sleep(10)
 
+    # 两个心跳的作用?
     srv = MySrv(heartbeat=1)
     srv.bind(endpoint)
     gevent.spawn(srv.run)
@@ -65,6 +66,7 @@ def test_client_server_activate_heartbeat():
     gevent.spawn(srv.run)
     gevent.sleep(0)
 
+    # 主动心跳?
     client = zerorpc.Client(heartbeat=1)
     client.connect(endpoint)
 
@@ -88,6 +90,7 @@ def test_client_server_passive_hearbeat():
     srv.bind(endpoint)
     gevent.spawn(srv.run)
 
+    # 被动心跳?
     client = zerorpc.Client(heartbeat=1, passive_heartbeat=True)
     client.connect(endpoint)
 

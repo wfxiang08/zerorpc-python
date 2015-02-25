@@ -34,10 +34,13 @@ from testutils import teardown, random_ipc_endpoint
 
 def test_close_server_hbchan():
     endpoint = random_ipc_endpoint()
+
+    # 创建Server
     server_events = zerorpc.Events(zmq.ROUTER)
     server_events.bind(endpoint)
     server = zerorpc.ChannelMultiplexer(server_events)
 
+    # 创建Client
     client_events = zerorpc.Events(zmq.DEALER)
     client_events.connect(endpoint)
     client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
@@ -54,6 +57,8 @@ def test_close_server_hbchan():
     gevent.sleep(3)
     print 'CLOSE SERVER SOCKET!!!'
     server_hbchan.close()
+
+    # 服务器关闭服务
     if sys.version_info < (2, 7):
         assert_raises(zerorpc.LostRemote, client_hbchan.recv)
     else:
@@ -118,6 +123,8 @@ def test_heartbeat_can_open_channel_server_close():
     gevent.sleep(3)
     print 'CLOSE SERVER SOCKET!!!'
     server_hbchan.close()
+
+    # 客户端失去心跳
     if sys.version_info < (2, 7):
         assert_raises(zerorpc.LostRemote, client_hbchan.recv)
     else:
@@ -139,6 +146,9 @@ def test_heartbeat_can_open_channel_client_close():
     client_events.connect(endpoint)
     client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
 
+    # channel的获取:
+    # 主动创建一个Channel, 并且用该Channel发送Event
+    # 被动获取一个Channel, 从已有的Event获取Channel
     client_channel = client.channel()
     client_hbchan = zerorpc.HeartBeatOnChannel(client_channel, freq=2)
 
@@ -265,6 +275,7 @@ def test_do_some_req_rep_lost_client():
 
         for x in xrange(10):
             client_hbchan.emit('add', (x, x * x))
+            # 等待事件的发生
             event = client_hbchan.recv()
             assert event.name == 'OK'
             assert list(event.args) == [x + x * x]
@@ -278,6 +289,7 @@ def test_do_some_req_rep_lost_client():
         server_hbchan = zerorpc.HeartBeatOnChannel(server_channel, freq=2)
 
         for x in xrange(10):
+            # 直接测试通信的协议(不涉及RPC)
             event = server_hbchan.recv()
             assert event.name == 'add'
             server_hbchan.emit('OK', (sum(event.args),))
@@ -291,6 +303,7 @@ def test_do_some_req_rep_lost_client():
 
     server_task = gevent.spawn(server_do)
 
+    # 等待两个事件的返回
     server_task.get()
     client_task.get()
     client.close()
@@ -308,14 +321,26 @@ def test_do_some_req_rep_client_timeout():
     client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
 
     def client_do():
+        # client创建一个chanel, 并在上面创建 HeartBeatOnChannel
+        # response_to
+        # Each consecutive event on a channel will have the header field "response_to" set to the channel id:
+        # 第一个Event的Id, 之后所有的Event, 无论是在服务器还是在Client, 都共享相同的数据
+        #
         client_channel = client.channel()
+
+        # 主动心跳?
         client_hbchan = zerorpc.HeartBeatOnChannel(client_channel, freq=2)
 
         if sys.version_info < (2, 7):
             def _do_with_assert_raises():
                 for x in xrange(10):
+                    # client发送Event到server, 并且等待服务器的返回
                     client_hbchan.emit('sleep', (x,))
-                    event = client_hbchan.recv(timeout=3)
+                    event = client_hbchan.recv(timeout=3) # x: 0, 1, 2正常返回, x: 3+ 返回异常, TimeoutExpired
+
+                    # 心跳的作用?
+
+                    print event
                     assert event.name == 'OK'
                     assert list(event.args) == [x]
             assert_raises(zerorpc.TimeoutExpired, _do_with_assert_raises)
@@ -324,6 +349,7 @@ def test_do_some_req_rep_client_timeout():
                 for x in xrange(10):
                     client_hbchan.emit('sleep', (x,))
                     event = client_hbchan.recv(timeout=3)
+                    print event
                     assert event.name == 'OK'
                     assert list(event.args) == [x]
         client_hbchan.close()
@@ -339,6 +365,8 @@ def test_do_some_req_rep_client_timeout():
             def _do_with_assert_raises():
                 for x in xrange(20):
                     event = server_hbchan.recv()
+                    print event
+
                     assert event.name == 'sleep'
                     gevent.sleep(event.args[0])
                     server_hbchan.emit('OK', event.args)
@@ -346,7 +374,9 @@ def test_do_some_req_rep_client_timeout():
         else:
             with assert_raises(zerorpc.LostRemote):
                 for x in xrange(20):
+                    # 服务器接口大量的Event, 但是中途发现: client 关闭, 心跳结束，然后服务器的请求也就终止
                     event = server_hbchan.recv()
+                    print event
                     assert event.name == 'sleep'
                     gevent.sleep(event.args[0])
                     server_hbchan.emit('OK', event.args)

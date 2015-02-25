@@ -30,12 +30,17 @@ import os
 _tmpfiles = []
 
 def random_ipc_endpoint():
-    tmpfile = '/tmp/zerorpc_test_socket_{0}.sock'.format(
-            str(random.random())[2:])
+    """
+        通过 socket来进行通信
+    """
+    tmpfile = '/tmp/zerorpc_test_socket_{0}.sock'.format(str(random.random())[2:])
     _tmpfiles.append(tmpfile)
     return 'ipc://{0}'.format(tmpfile)
 
 def teardown():
+    """
+    删除所使用的socket文件
+    """
     global _tmpfiles
     for tmpfile in _tmpfiles:
         print 'unlink', tmpfile

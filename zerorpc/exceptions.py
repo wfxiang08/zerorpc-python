@@ -24,6 +24,9 @@
 
 
 class LostRemote(Exception):
+    """
+        失去心跳之后
+    """
     pass
 
 

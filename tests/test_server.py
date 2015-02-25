@@ -43,6 +43,7 @@ def test_server_manual():
         def add(self, a, b):
             return a + b
 
+    # 运行一个Server
     srv = MySrv()
     srv.bind(endpoint)
     gevent.spawn(srv.run)
@@ -51,6 +52,7 @@ def test_server_manual():
     client_events.connect(endpoint)
     client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
 
+    # 通过一个Channel来"手动"发送信息
     client_channel = client.channel()
     client_channel.emit('lolita', tuple())
     event = client_channel.recv()
@@ -80,6 +82,7 @@ def test_client_server():
     srv.bind(endpoint)
     gevent.spawn(srv.run)
 
+    # 通过RPC自动发送Event
     client = zerorpc.Client()
     client.connect(endpoint)
 
@@ -106,9 +109,11 @@ def test_client_server_client_timeout():
     srv.bind(endpoint)
     gevent.spawn(srv.run)
 
+    # 如何控制timeout
     client = zerorpc.Client(timeout=2)
     client.connect(endpoint)
 
+    # 调用: add方法, timeout
     if sys.version_info < (2, 7):
         assert_raises(zerorpc.TimeoutExpired, client.add, 1, 4)
     else:
@@ -134,12 +139,15 @@ def test_client_server_exception():
     client.connect(endpoint)
 
     if sys.version_info < (2, 7):
+        # 服务器端出现Exception
         def _do_with_assert_raises():
             print client.raise_something(42)
         assert_raises(zerorpc.RemoteError, _do_with_assert_raises)
     else:
         with assert_raises(zerorpc.RemoteError):
             print client.raise_something(42)
+
+    # 正常访问
     assert client.raise_something(range(5)) == 4
     client.close()
     srv.close()
@@ -160,6 +168,7 @@ def test_client_server_detailed_exception():
     client = zerorpc.Client(timeout=2)
     client.connect(endpoint)
 
+    # 验证会出现异常
     if sys.version_info < (2, 7):
         def _do_with_assert_raises():
             print client.raise_error()
@@ -167,6 +176,8 @@ def test_client_server_detailed_exception():
     else:
         with assert_raises(zerorpc.RemoteError):
             print client.raise_error()
+
+    # 验证Error的具体细节
     try:
         client.raise_error()
     except zerorpc.RemoteError as e:
@@ -194,8 +205,11 @@ def test_exception_compat_v1():
     client_events.connect(endpoint)
     client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
 
+    # channel是用来发送和接受消息的
     rpccall = client.channel()
     rpccall.emit('donotexist', tuple())
+
+    # RPC直接返回错误消息
     event = rpccall.recv()
     print event
     assert event.name == 'ERR'
@@ -204,6 +218,7 @@ def test_exception_compat_v1():
     assert name == 'NameError'
     assert msg == 'donotexist'
 
+    # 测试兼容旧版本(Skip)
     rpccall = client.channel()
     rpccall.emit('donotexist', tuple(), xheader=dict(v=1))
     event = rpccall.recv()

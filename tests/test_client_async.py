@@ -51,6 +51,7 @@ def test_client_server_client_timeout_with_async():
     client = zerorpc.Client(timeout=2)
     client.connect(endpoint)
 
+    # 异步和同步的差别?
     async_result = client.add(1, 4, async=True)
 
     if sys.version_info < (2, 7):
@@ -83,6 +84,8 @@ def test_client_server_with_async():
     client.connect(endpoint)
 
     async_result = client.lolita(async=True)
+
+    # 没有timeout, 一直等待结果
     assert async_result.get() == 42
 
     async_result = client.add(1, 4, async=True)

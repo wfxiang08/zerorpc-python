@@ -43,11 +43,43 @@ from logging import getLogger
 
 logger = getLogger(__name__)
 
+"""
+
+    Server
+        SocketBase
+            _events --> _multiplexer
+            _bind/_connect
+            _context
+
+        ServerBase
+            _multiplexer: ChannelMultiplexer
+            _methods
+            __call__: --> _methods call
+
+            _task_pool -->
+                          _acceptor_task: _acceptor
+                          _async_task
+
+
+    gevent的学习:
+        http://xlambda.com/gevent-tutorial/
+
+
+    greenlet
+        Event/Threads 类似的概念
+
+
+    Server:
+        run:
+           _acceptor_task: _acceptor
+
+"""
 
 class ServerBase(object):
 
     def __init__(self, channel, methods=None, name=None, context=None,
             pool_size=None, heartbeat=5):
+        # self._events
         self._multiplexer = ChannelMultiplexer(channel)
 
         if methods is None:
@@ -55,21 +87,30 @@ class ServerBase(object):
 
         self._context = context or Context.get_instance()
         self._name = name or self._extract_name()
+
         self._task_pool = gevent.pool.Pool(size=pool_size)
         self._acceptor_task = None
+
         self._methods = self._filter_methods(ServerBase, self, methods)
 
         self._inject_builtins()
         self._heartbeat_freq = heartbeat
 
+        # _methods如何处理
+        # self documented
         for (k, functor) in self._methods.items():
             if not isinstance(functor, DecoratorBase):
                 self._methods[k] = rep(functor)
 
     @staticmethod
     def _filter_methods(cls, self, methods):
+        #
+        # 期待返回一个: dict
+        #
         if hasattr(methods, '__getitem__'):
             return methods
+
+        # 出现在methods, 但是不出现在： ServerBase 方法列表中
         server_methods = set(getattr(self, k) for k in dir(cls) if not
                              k.startswith('_'))
         return dict((k, getattr(methods, k))
@@ -117,8 +158,13 @@ class ServerBase(object):
         self._methods['_zerorpc_inspect'] = self._zerorpc_inspect
 
     def __call__(self, method, *args):
+        """
+        如何执行方法调用:
+        """
         if method not in self._methods:
             raise NameError(method)
+
+        # 访问dict的对应方法
         return self._methods[method](*args)
 
     def _print_traceback(self, protocol_v1, exc_infos):
@@ -133,20 +179,42 @@ class ServerBase(object):
         return (name, human_msg, human_traceback)
 
     def _async_task(self, initial_event):
+        """
+            读取到一个event之后, 就创建一个_async_task(task执行完毕，则自动删除)
+
+            该Event会使用一个独立的 fd 和client进行通信
+            fd = socket_fd.listen()
+
+
+            同时在该链接上创建一个: HeartBeatOnChannel的Event, 通过心跳保持连接
+        """
         protocol_v1 = initial_event.header.get('v', 1) < 2
+
+        # 将event和channel关联
+        #
+
+        # 新的Event?
         channel = self._multiplexer.channel(initial_event)
-        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq,
-                passive=protocol_v1)
+
+        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq, passive=protocol_v1)
+
         bufchan = BufferedChannel(hbchan)
         exc_infos = None
         event = bufchan.recv()
+
         try:
             self._context.hook_load_task_context(event.header)
+
+            # 一般的Task是调用某个函数
             functor = self._methods.get(event.name, None)
             if functor is None:
                 raise NameError(event.name)
+
+            # ReqRep#process_call
             functor.pattern.process_call(self._context, bufchan, event, functor)
+
         except LostRemote:
+            # 失去Client心跳
             exc_infos = list(sys.exc_info())
             self._print_traceback(protocol_v1, exc_infos)
         except Exception:
@@ -161,16 +229,37 @@ class ServerBase(object):
             bufchan.close()
 
     def _acceptor(self):
+
         while True:
             initial_event = self._multiplexer.recv()
+
+            # 读取到event, 将: (_async_task, initial_event）封装成为一个Greenlet, 放入Pool
+            #
+            # Greenlet可以认为类似一个thread, 在spawn之后就会被自动执行
+            # _task_pool 将部分greenlet自动管理，限制最大的并发度
+            #
+
+            # 对于Server, 监听新的events
+            # 对于Client, 监听所有的数据(SKIP, 因为在Server中)
             self._task_pool.spawn(self._async_task, initial_event)
 
     def run(self):
+        """
+            _acceptor作为一个fd的操作，被封装成为一个event
+
+            大致的工作模式:
+                _acceptor不定地运转， 直接由 gevent来调度，然后得到的initial_event交给 _task_pool去统一调度
+
+        """
         self._acceptor_task = gevent.spawn(self._acceptor)
         try:
+            # 返回: greenlet的结果
+            #      一般_acceptor为死循环，因此会一直堵在这个地方
             self._acceptor_task.get()
         finally:
             self.stop()
+
+            # 等待所有的事情做完了，则关闭服务
             self._task_pool.join(raise_error=True)
 
     def stop(self):
@@ -183,8 +272,9 @@ class ClientBase(object):
 
     def __init__(self, channel, context=None, timeout=30, heartbeat=5,
             passive_heartbeat=False):
-        self._multiplexer = ChannelMultiplexer(channel,
-                ignore_broadcast=True)
+
+        self._multiplexer = ChannelMultiplexer(channel, ignore_broadcast=True)
+
         self._context = context or Context.get_instance()
         self._timeout = timeout
         self._heartbeat_freq = heartbeat
@@ -214,6 +304,7 @@ class ClientBase(object):
 
     def _process_response(self, request_event, bufchan, timeout):
         try:
+            # client等待数据的返回
             reply_event = bufchan.recv(timeout)
             pattern = self._select_pattern(reply_event)
             return pattern.process_answer(self._context, bufchan, request_event,
@@ -229,25 +320,37 @@ class ClientBase(object):
             raise
 
     def __call__(self, method, *args, **kargs):
+        """
+            client(command, params)， 在调用RPC时参数都采用: args来传递
+        """
+        # 主动或者使用默认的timeout
         timeout = kargs.get('timeout', self._timeout)
+
         channel = self._multiplexer.channel()
-        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq,
-                passive=self._passive_heartbeat)
+        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq, passive=self._passive_heartbeat)
         bufchan = BufferedChannel(hbchan, inqueue_size=kargs.get('slots', 100))
 
         xheader = self._context.hook_get_task_context()
+
+        # 如何创建event, 然后如何获得回调?
         request_event = bufchan.create_event(method, args, xheader)
+
         self._context.hook_client_before_request(request_event)
+
+        # 发送请求
         bufchan.emit_event(request_event)
 
+        # 接受请求
+
         try:
+            # 如果是同步的?
             if kargs.get('async', False) is False:
                 return self._process_response(request_event, bufchan, timeout)
-
-            async_result = gevent.event.AsyncResult()
-            gevent.spawn(self._process_response, request_event, bufchan,
-                    timeout).link(async_result)
-            return async_result
+            else:
+                # 异步如何处理呢?
+                async_result = gevent.event.AsyncResult()
+                gevent.spawn(self._process_response, request_event, bufchan, timeout).link(async_result)
+                return async_result
         except:
             # XXX: This is going to be closed twice if async is false and
             # _process_response raises an exception. I wonder if the above
@@ -257,19 +360,32 @@ class ClientBase(object):
             raise
 
     def __getattr__(self, method):
+        """
+        直接访问client的属性 --> __call__
+        :param method:
+        :return:
+        """
         return lambda *args, **kargs: self(method, *args, **kargs)
 
 
 class Server(SocketBase, ServerBase):
-
+    """
+        Server是如何实现的?
+    """
     def __init__(self, methods=None, name=None, context=None, pool_size=None,
             heartbeat=5):
         SocketBase.__init__(self, zmq.ROUTER, context)
+
+        # 两种做法:
+        # 1. 扩展Server
+        # 2. 定义一个新的对象: methods, 例如: methods = RPCObject()
         if methods is None:
             methods = self
 
         name = name or ServerBase._extract_name(methods)
+
         methods = ServerBase._filter_methods(Server, self, methods)
+
         ServerBase.__init__(self, self._events, methods, name, context,
                 pool_size, heartbeat)
 
@@ -285,6 +401,8 @@ class Client(SocketBase, ClientBase):
         SocketBase.__init__(self, zmq.DEALER, context=context)
         ClientBase.__init__(self, self._events, context, timeout, heartbeat,
                 passive_heartbeat)
+
+        # 在初始化是创建连接
         if connect_to:
             self.connect(connect_to)
 
@@ -411,3 +529,5 @@ def fork_task_context(functor, context=None):
         context.hook_load_task_context(header)
         return functor(*args, **kargs)
     return wrapped
+
+

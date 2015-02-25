@@ -27,10 +27,16 @@ class ReqRep:
 
     def process_call(self, context, bufchan, req_event, functor):
         context.hook_server_before_exec(req_event)
+
+        # 调用函数
         result = functor(*req_event.args)
+
         rep_event = bufchan.create_event('OK', (result,),
                 context.hook_get_task_context())
+
         context.hook_server_after_exec(req_event, rep_event)
+
+        # 返回结果
         bufchan.emit_event(rep_event)
 
     def accept_answer(self, event):

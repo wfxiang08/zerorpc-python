@@ -35,6 +35,7 @@ def test1():
         s.bind('tcp://0.0.0.0:9999')
         while True:
             print 'srv recving...'
+            # 底层的socket通信，直接处理RAW Events
             r = s.recv()
             print 'srv', r
             print 'srv sending...'

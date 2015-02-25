@@ -42,7 +42,11 @@ def test_context():
 
 
 def test_event():
+    """
+        注意: msgid的编号
+    """
     context = MokupContext()
+    # event 0
     event = zerorpc.Event('mylittleevent', (None,), context=context)
     print event
     assert event.name == 'mylittleevent'
@@ -67,6 +71,7 @@ def test_event():
     assert event.header['message_id'] == 3
     assert event.args == ('b', 21)
 
+    # 测试unpack, pack
     packed = event.pack()
     unpacked = zerorpc.Event.unpack(packed)
     print unpacked
@@ -96,11 +101,13 @@ def test_events_req_rep():
     server = zerorpc.Events(zmq.REP)
     server.bind(endpoint)
 
+    # 客户端输入
     client = zerorpc.Events(zmq.REQ)
     client.connect(endpoint)
 
     client.emit('myevent', ('arg1',))
 
+    # 服务器获取
     event = server.recv()
     print event
     assert event.name == 'myevent'
@@ -115,6 +122,7 @@ def test_events_req_rep2():
     client = zerorpc.Events(zmq.REQ)
     client.connect(endpoint)
 
+    # 服务器 & 客户端应答
     for i in xrange(10):
         client.emit('myevent' + str(i), (i,))
         event = server.recv()

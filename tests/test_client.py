@@ -35,11 +35,12 @@ def test_client_connect():
 
         def lolita(self):
             return 42
-
+    # 创建一个本地的Server
     srv = MySrv()
     srv.bind(endpoint)
     gevent.spawn(srv.run)
 
+    # 从client访问: remote method
     client = zerorpc.Client()
     client.connect(endpoint)
 
@@ -57,6 +58,7 @@ def test_client_quick_connect():
     srv.bind(endpoint)
     gevent.spawn(srv.run)
 
+    # 一步到位
     client = zerorpc.Client(endpoint)
 
     assert client.lolita() == 42

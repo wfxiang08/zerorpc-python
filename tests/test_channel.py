@@ -30,31 +30,49 @@ from testutils import teardown, random_ipc_endpoint
 
 def test_events_channel_client_side():
     endpoint = random_ipc_endpoint()
+
+    # 创建Server
     server_events = zerorpc.Events(zmq.ROUTER)
     server_events.bind(endpoint)
     server = zerorpc.ChannelMultiplexer(server_events)
 
+    # 创建Client
     client_events = zerorpc.Events(zmq.DEALER)
     client_events.connect(endpoint)
     client = zerorpc.ChannelMultiplexer(client_events)
 
+    # 客户端调用信息
     client_channel = client.channel()
     client_channel.emit('someevent', (42,))
 
+    # 服务器得到信息
     event = server.recv()
     print event
+
+    # 验证参数:
     assert list(event.args) == [42]
+
+    # 通过: zmq.ROUTER 来设置
     assert event.header.get('zmqid', None) is not None
 
     server.emit('someanswer', (21,),
-            xheader=dict(response_to=event.header['message_id'],
+                xheader=dict(response_to=event.header['message_id'],
                 zmqid=event.header['zmqid']))
+
     event = client_channel.recv()
     assert list(event.args) == [21]
 
+"""
+    server.recv
+    server.emit
 
+    和
+    server_channel.recv
+    server_channel.emit的区别
+"""
 def test_events_channel_client_side_server_send_many():
     endpoint = random_ipc_endpoint()
+
     server_events = zerorpc.Events(zmq.ROUTER)
     server_events.bind(endpoint)
     server = zerorpc.ChannelMultiplexer(server_events)
@@ -66,21 +84,32 @@ def test_events_channel_client_side_server_send_many():
     client_channel = client.channel()
     client_channel.emit('giveme', (10,))
 
+    # 客户端发送Event, Server接受event, 并且验证
     event = server.recv()
     print event
     assert list(event.args) == [10]
+
+
     assert event.header.get('zmqid', None) is not None
+
+    # 服务器批量发送消息，客户端批量接受信息
+    print "message_id: ", event.header['message_id']
+    print "zmqid: ", event.header['zmqid']
 
     for x in xrange(10):
         server.emit('someanswer', (x,),
-                xheader=dict(response_to=event.header['message_id'],
+                    xheader=dict(response_to=event.header['message_id'],
                     zmqid=event.header['zmqid']))
+
     for x in xrange(10):
         event = client_channel.recv()
         assert list(event.args) == [x]
 
 
 def test_events_channel_both_side():
+    """
+        两边都使用 Channel
+    """
     endpoint = random_ipc_endpoint()
     server_events = zerorpc.Events(zmq.ROUTER)
     server_events.bind(endpoint)
@@ -90,6 +119,7 @@ def test_events_channel_both_side():
     client_events.connect(endpoint)
     client = zerorpc.ChannelMultiplexer(client_events)
 
+    # client --> server
     client_channel = client.channel()
     client_channel.emit('openthat', (42,))
 
@@ -98,6 +128,8 @@ def test_events_channel_both_side():
     assert list(event.args) == [42]
     assert event.name == 'openthat'
 
+    # server --> client
+    # 如何获取Channel? 根据Event获取Channel
     server_channel = server.channel(event)
     server_channel.emit('test', (21,))
 
@@ -105,6 +137,7 @@ def test_events_channel_both_side():
     assert list(event.args) == [21]
     assert event.name == 'test'
 
+    # server --> client
     server_channel.emit('test', (22,))
 
     event = client_channel.recv()

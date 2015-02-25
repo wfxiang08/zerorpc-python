@@ -38,12 +38,14 @@ parser = argparse.ArgumentParser(
     description='Make a zerorpc call to a remote service.'
 )
 
+# 添加一个 group, 两个参数互斥
 client_or_server = parser.add_mutually_exclusive_group()
 client_or_server.add_argument('--client', action='store_true', default=True,
         help='remote procedure call mode (default)')
 client_or_server.add_argument('--server', action='store_false', dest='client',
         help='turn a given python module into a server')
 
+# 继续通过添加其他的参数
 parser.add_argument('--connect', action='append', metavar='address',
                     help='specify address to connect to. Can be specified \
                     multiple times and in conjunction with --bind')
@@ -61,29 +63,38 @@ parser.add_argument('-j', '--json', default=False, action='store_true',
                     before being sent to the remote')
 parser.add_argument('-pj', '--print-json', default=False, action='store_true',
                     help='print result in JSON format.')
+
 parser.add_argument('-?', '--inspect', default=False, action='store_true',
                     help='retrieve detailed informations for the given \
                     remote (cf: command) method. If not method, display \
                     a list of remote methods signature. (only for --client).')
+
 parser.add_argument('--active-hb', default=False, action='store_true',
                     help='enable active heartbeat. The default is to \
                     wait for the server to send the first heartbeat')
+
 parser.add_argument('address', nargs='?', help='address to connect to. Skip \
                     this if you specified --connect or --bind at least once')
+
+
 parser.add_argument('command', nargs='?',
                     help='remote procedure to call if --client (default) or \
                     python module/class to load if --server. If no command is \
                     specified, a list of remote methods are displayed.')
+
 parser.add_argument('params', nargs='*',
                     help='parameters for the remote call if --client \
                     (default)')
 
 
 def setup_links(args, socket):
+    # 可以绑定到多个(协议:IP:Port)组合
     if args.bind:
         for endpoint in args.bind:
             print 'binding to "{0}"'.format(endpoint)
             socket.bind(endpoint)
+
+    # 为什么可以连接到多个地方呢?
     addresses = []
     if args.address:
         addresses.append(args.address)
@@ -98,6 +109,8 @@ def run_server(args):
     server_obj_path = args.command
 
     sys.path.insert(0, os.getcwd())
+
+    # 修改 sys.path, 然后加载 server_obj
     if '.' in server_obj_path:
         modulepath, objname = server_obj_path.rsplit('.', 1)
         module = __import__(modulepath, fromlist=[objname])
@@ -105,11 +118,16 @@ def run_server(args):
     else:
         server_obj = __import__(server_obj_path)
 
+    # 创建对应的对象
     if callable(server_obj):
         server_obj = server_obj()
 
+    # 通过RPC对象和 heartbeat实现通信
     server = zerorpc.Server(server_obj, heartbeat=args.heartbeat)
+
+    # 绑定端口/IP
     setup_links(args, server)
+
     print 'serving "{0}"'.format(server_obj_path)
     return server.run()
 
@@ -206,9 +224,12 @@ def zerorpc_inspect(client, method=None, long_doc=True, include_argspec=True):
 
 
 def run_client(args):
-    client = zerorpc.Client(timeout=args.timeout, heartbeat=args.heartbeat,
-            passive_heartbeat=not args.active_hb)
+    """
+    创建一个client,
+    """
+    client = zerorpc.Client(timeout=args.timeout, heartbeat=args.heartbeat, passive_heartbeat=not args.active_hb)
     setup_links(args, client)
+
     if not args.command:
         (longest_name_len, detailled_methods) = zerorpc_inspect(client,
                 long_doc=False, include_argspec=args.inspect)
@@ -219,17 +240,25 @@ def run_client(args):
             for (name, doc) in detailled_methods:
                 print '{0} {1}'.format(name.ljust(longest_name_len), doc)
         return
+
+    # inspect command相关的东西
     if args.inspect:
         (longest_name_len, detailled_methods) = zerorpc_inspect(client,
                 method=args.command)
         (name, doc) = detailled_methods[0]
         print '\n{0}\n\n{1}\n'.format(name, doc)
         return
+
+    # 以JSON的格式从命令行解析参数, 或直接以string作为参数
     if args.json:
         call_args = [json.loads(x) for x in args.params]
     else:
         call_args = args.params
+
+    # 如何通信的?
     results = client(args.command, *call_args)
+
+    # 判断返回的结果是否可以 iterator
     if getattr(results, 'next', None) is None:
         if args.print_json:
             json.dump(results, sys.stdout)
@@ -265,6 +294,7 @@ def main():
         parser.print_help()
         return -1
 
+    # 区分Client & Server
     if args.client:
         return run_client(args)
 
@@ -272,4 +302,5 @@ def main():
         parser.print_help()
         return -1
 
+    # zerorpc --server --bind tcp://*:1234 time
     return run_server(args)

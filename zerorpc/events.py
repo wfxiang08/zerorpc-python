@@ -51,7 +51,10 @@ class Sender(object):
 
     def _sender(self):
         running = True
+
+        # iterator的特殊处理
         for parts in self._send_queue:
+            # 一口气把所有的数据发送完毕，要求数据量不要太大
             for i in xrange(len(parts) - 1):
                 try:
                     self._socket.send(parts[i], flags=zmq.SNDMORE)
@@ -64,6 +67,7 @@ class Sender(object):
             if not running:
                 return
 
+    # 直接将数据添加到_send_queue中
     def __call__(self, parts):
         self._send_queue.put(parts)
 
@@ -85,35 +89,48 @@ class Receiver(object):
     def _recver(self):
         running = True
         while True:
+            # 一口气读完所有的数据包
             parts = []
             while True:
                 try:
+                    # 监听Socket
                     part = self._socket.recv()
                 except gevent.GreenletExit:
                     running = False
                     if len(parts) == 0:
                         return
+
+                    # 什么情况?
                     part = self._socket.recv()
+
                 parts.append(part)
                 if not self._socket.getsockopt(zmq.RCVMORE):
                     break
             if not running:
                 break
+
+            # 添加一个完整的数据包
             self._recv_queue.put(parts)
 
     def __call__(self):
+        # 没调用一次: Receiver就从: queue中读取一个parts的数据
         return self._recv_queue.get()
 
 
 class Event(object):
+    """
+        将name, _args, _header进行打包
+    """
 
     __slots__ = ['_name', '_args', '_header']
 
     def __init__(self, name, args, context, header=None):
         self._name = name
         self._args = args
+
         if header is None:
             self._header = {
+                # 生成新的msgid
                 'message_id': context.new_msgid(),
                 'v': 3
             }
@@ -136,9 +153,11 @@ class Event(object):
     def args(self):
         return self._args
 
+    # 将参数打包
     def pack(self):
         return msgpack.Packer().pack((self._header, self._name, self._args))
 
+    # 解压缩参数
     @staticmethod
     def unpack(blob):
         unpacker = msgpack.Unpacker()
@@ -171,19 +190,33 @@ class Event(object):
 
 
 class Events(object):
+    """
+
+    """
     def __init__(self, zmq_socket_type, context=None):
+        # 默认为: zmq.ROUTER
         self._zmq_socket_type = zmq_socket_type
         self._context = context or Context.get_instance()
+
         self._socket = zmq.Socket(self._context, zmq_socket_type)
+
         self._send = self._socket.send_multipart
         self._recv = self._socket.recv_multipart
+
+        # 发送，读取都租用在同一个 _socket上
         if zmq_socket_type in (zmq.PUSH, zmq.PUB, zmq.DEALER, zmq.ROUTER):
+            # 异步发送数据（存在缓存)
             self._send = Sender(self._socket)
         if zmq_socket_type in (zmq.PULL, zmq.SUB, zmq.DEALER, zmq.ROUTER):
             self._recv = Receiver(self._socket)
 
+        # _socket主要用于和监听新的请求，并且和client的交互(小数据量)
+
     @property
     def recv_is_available(self):
+        #
+        # 默认情况下: _zmq_socket_type为 zmq.ROUTER
+        #
         return self._zmq_socket_type in (zmq.PULL, zmq.SUB, zmq.DEALER, zmq.ROUTER)
 
     def __del__(self):
@@ -205,8 +238,10 @@ class Events(object):
         self._socket.close()
 
     def _resolve_endpoint(self, endpoint, resolve=True):
+        # 对: endpoint调用一些事先准备好的func, 进行处理; 默认不做任何事情
         if resolve:
             endpoint = self._context.hook_resolve_endpoint(endpoint)
+
         if isinstance(endpoint, (tuple, list)):
             r = []
             for sub_endpoint in endpoint:
@@ -221,12 +256,25 @@ class Events(object):
         return r
 
     def bind(self, endpoint, resolve=True):
+        """
+            将_socket绑定到指定的endpoint
+        :param endpoint:
+        :param resolve:
+        :return:
+        """
         r = []
         for endpoint_ in self._resolve_endpoint(endpoint, resolve):
             r.append(self._socket.bind(endpoint_))
         return r
 
     def create_event(self, name, args, xheader=None):
+        """
+            创建一个Event对象
+        :param name:
+        :param args:
+        :param xheader:
+        :return:
+        """
         xheader = {} if xheader is None else xheader
         event = Event(name, args, context=self._context)
         for k, v in xheader.items():
@@ -236,22 +284,40 @@ class Events(object):
         return event
 
     def emit_event(self, event, identity=None):
+        """
+        发送Event
+        :param event:
+        :param identity:
+        :return:
+        """
+        # if identity:
+        #     print get_stack_info()
+        #     print "identity: ", identity
+
         if identity is not None:
+            # 带有identity的情况
             parts = list(identity)
             parts.extend(['', event.pack()])
+
         elif self._zmq_socket_type in (zmq.DEALER, zmq.ROUTER):
+            # DEALER, ROUTER的parts包装
             parts = ('', event.pack())
         else:
+
+            # 其他的type?
             parts = (event.pack(),)
         self._send(parts)
 
     def emit(self, name, args, xheader=None):
         xheader = {} if xheader is None else xheader
         event = self.create_event(name, args, xheader)
+
         identity = xheader.get('zmqid', None)
+
         return self.emit_event(event, identity)
 
     def recv(self):
+        # 读取用户请求
         parts = self._recv()
         if len(parts) == 1:
             identity = None
@@ -271,9 +337,21 @@ class Events(object):
     def context(self):
         return self._context
 
+def get_stack_info():
+    import inspect
+    stacks = inspect.stack()
+    results = []
+    for stack in stacks[2:]:
+        func_name = "%s %s %s %d" % (stack[1], stack[3], stack[4], stack[2])
+        func_name = func_name.replace("/System/Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/", "")
+        results.append(func_name)
+    return "\n".join(results)
+
 
 class WrappedEvents(object):
-
+    """
+        在event的基础上再做一个封装
+    """
     def __init__(self, channel):
         self._channel = channel
 

@@ -28,6 +28,9 @@ from .events import Events
 
 
 class SocketBase(object):
+    """
+    定义了Socket相关的操作: connect, bind以及_events
+    """
 
     def __init__(self, zmq_socket_type, context=None):
         self._context = context or Context.get_instance()
@@ -36,6 +39,7 @@ class SocketBase(object):
     def close(self):
         self._events.close()
 
+    # 通过_events来connect, bind服务
     def connect(self, endpoint, resolve=True):
         return self._events.connect(endpoint, resolve)
 

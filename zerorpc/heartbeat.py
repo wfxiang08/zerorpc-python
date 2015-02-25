@@ -34,17 +34,33 @@ from .exceptions import *  # noqa
 
 
 class HeartBeatOnChannel(object):
+    """
+        对原来的心跳进行包装， Proxy设计模式
 
+        工作原理:
+        1. HeartBeatOnChannel 实现了 Channel的所有的接口
+        2. _input_queue 实现了  _recv_task和recv之间的异步交互
+        3. _heartbeat_task: 主动，被动的差别?
+           在收到Heartbeat之后都会创建 heartbeat, 只不过差别在于谁先发起任务
+    """
     def __init__(self, channel, freq=5, passive=False):
         self._channel = channel
         self._heartbeat_freq = freq
+
         self._input_queue = gevent.queue.Channel()
+
         self._remote_last_hb = None
         self._lost_remote = False
+
         self._recv_task = gevent.spawn(self._recver)
+
         self._heartbeat_task = None
+
+        # 当前执行的任务(Channel, socket fd)
         self._parent_coroutine = gevent.getcurrent()
         self._compat_v2 = None
+
+        # 默认使用主动心跳
         if not passive:
             self._start_heartbeat()
 
@@ -59,9 +75,11 @@ class HeartBeatOnChannel(object):
         if self._heartbeat_task is not None:
             self._heartbeat_task.kill()
             self._heartbeat_task = None
+
         if self._recv_task is not None:
             self._recv_task.kill()
             self._recv_task = None
+
         if self._channel is not None:
             self._channel.close()
             self._channel = None
@@ -69,27 +87,41 @@ class HeartBeatOnChannel(object):
     def _heartbeat(self):
         while True:
             gevent.sleep(self._heartbeat_freq)
+
             if self._remote_last_hb is None:
                 self._remote_last_hb = time.time()
+
+            # 检测是否失去heartbeat, 如果失去心跳，则终止当前的连接
             if time.time() > self._remote_last_hb + self._heartbeat_freq * 2:
                 self._lost_remote = True
                 gevent.kill(self._parent_coroutine,
                         self._lost_remote_exception())
                 break
+
+            # 发送消息到 Client?
             self._channel.emit('_zpc_hb', (0,))  # 0 -> compat with protocol v2
 
     def _start_heartbeat(self):
+        """
+            创建heartbeat任务
+        """
         if self._heartbeat_task is None and self._heartbeat_freq is not None:
             self._heartbeat_task = gevent.spawn(self._heartbeat)
 
     def _recver(self):
         while True:
             event = self._channel.recv()
+
+            # 不考虑兼容性: _compat_v2 = None 恒成立
             if self._compat_v2 is None:
                 self._compat_v2 = event.header.get('v', 0) < 3
+
             if event.name == '_zpc_hb':
+                # 处理心跳Event, 如果收到心跳，则主动启动?
                 self._remote_last_hb = time.time()
                 self._start_heartbeat()
+
+                # Skip
                 if self._compat_v2:
                     event.name = '_zpc_more'
                     self._input_queue.put(event)
@@ -118,6 +150,7 @@ class HeartBeatOnChannel(object):
         if self._lost_remote:
             raise self._lost_remote_exception()
 
+        # 生产者，消费者模式
         try:
             event = self._input_queue.get(timeout=timeout)
         except gevent.queue.Empty:
