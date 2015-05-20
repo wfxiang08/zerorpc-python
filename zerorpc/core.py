@@ -194,12 +194,15 @@ class ServerBase(object):
         #
 
         # 新的Event?
+        # 这个地方是不是有bug, 后?
         channel = self._multiplexer.channel(initial_event)
 
         hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq, passive=protocol_v1)
 
         bufchan = BufferedChannel(hbchan)
         exc_infos = None
+
+        # 或者这个地方?
         event = bufchan.recv()
 
         try:
@@ -211,6 +214,8 @@ class ServerBase(object):
                 raise NameError(event.name)
 
             # ReqRep#process_call
+            # 将functor交给: bufchan去处理
+            #
             functor.pattern.process_call(self._context, bufchan, event, functor)
 
         except LostRemote:
@@ -220,8 +225,8 @@ class ServerBase(object):
         except Exception:
             exc_infos = list(sys.exc_info())
             human_exc_infos = self._print_traceback(protocol_v1, exc_infos)
-            reply_event = bufchan.create_event('ERR', human_exc_infos,
-                    self._context.hook_get_task_context())
+
+            reply_event = bufchan.create_event('ERR', human_exc_infos, self._context.hook_get_task_context())
             self._context.hook_server_inspect_exception(event, reply_event, exc_infos)
             bufchan.emit_event(reply_event)
         finally:
@@ -230,7 +235,9 @@ class ServerBase(object):
 
     def _acceptor(self):
 
+        # 不停地接受Event, 并且"并发地"处理Event
         while True:
+            # 服务器模式下，只会返回新的连接
             initial_event = self._multiplexer.recv()
 
             # 读取到event, 将: (_async_task, initial_event）封装成为一个Greenlet, 放入Pool
@@ -270,8 +277,8 @@ class ServerBase(object):
 
 class ClientBase(object):
 
-    def __init__(self, channel, context=None, timeout=30, heartbeat=5,
-            passive_heartbeat=False):
+    # 默认： passive_heartbeat = False， 被动心跳
+    def __init__(self, channel, context=None, timeout=30, heartbeat=5, passive_heartbeat=False):
 
         self._multiplexer = ChannelMultiplexer(channel, ignore_broadcast=True)
 
@@ -306,13 +313,17 @@ class ClientBase(object):
         try:
             # client等待数据的返回
             reply_event = bufchan.recv(timeout)
+
+            # 选择请求模式:
+            # REQ/REP
+            # REQ/STREAM
             pattern = self._select_pattern(reply_event)
-            return pattern.process_answer(self._context, bufchan, request_event,
-                    reply_event, self._handle_remote_error)
+
+            return pattern.process_answer(self._context, bufchan, request_event, reply_event, self._handle_remote_error)
+
         except TimeoutExpired:
             bufchan.close()
-            ex = TimeoutExpired(timeout,
-                    'calling remote method {0}'.format(request_event.name))
+            ex = TimeoutExpired(timeout, 'calling remote method {0}'.format(request_event.name))
             self._context.hook_client_after_request(request_event, None, ex)
             raise ex
         except:
@@ -326,22 +337,24 @@ class ClientBase(object):
         # 主动或者使用默认的timeout
         timeout = kargs.get('timeout', self._timeout)
 
+        # 1. 构建Channel
         channel = self._multiplexer.channel()
         hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq, passive=self._passive_heartbeat)
         bufchan = BufferedChannel(hbchan, inqueue_size=kargs.get('slots', 100))
 
+
+        # 2. 各种hook的作用?
         xheader = self._context.hook_get_task_context()
 
-        # 如何创建event, 然后如何获得回调?
+        # 3. 如何创建event, 然后如何获得回调?
         request_event = bufchan.create_event(method, args, xheader)
 
         self._context.hook_client_before_request(request_event)
 
-        # 发送请求
+        # 4. 发送请求
         bufchan.emit_event(request_event)
 
-        # 接受请求
-
+        # 5. 处理response(同步等待，或异步等待)
         try:
             # 如果是同步的?
             if kargs.get('async', False) is False:
@@ -356,6 +369,7 @@ class ClientBase(object):
             # _process_response raises an exception. I wonder if the above
             # async branch can raise an exception too, if no we can just remove
             # this code.
+            # 可能出现超时等异常?
             bufchan.close()
             raise
 
@@ -370,7 +384,8 @@ class ClientBase(object):
 
 class Server(SocketBase, ServerBase):
     """
-        Server是如何实现的?
+        Server是如何实现的
+        主要是API, 如何将ServerBase的框架和Methods等结合起来
     """
     def __init__(self, methods=None, name=None, context=None, pool_size=None,
             heartbeat=5):
@@ -386,8 +401,7 @@ class Server(SocketBase, ServerBase):
 
         methods = ServerBase._filter_methods(Server, self, methods)
 
-        ServerBase.__init__(self, self._events, methods, name, context,
-                pool_size, heartbeat)
+        ServerBase.__init__(self, self._events, methods, name, context, pool_size, heartbeat)
 
     def close(self):
         ServerBase.close(self)

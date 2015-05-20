@@ -30,16 +30,21 @@ import gevent.event
 import gevent.local
 import gevent.lock
 
+from __future__ import absolute_import
+from zerorpc.context import Context
 
 import gevent_zmq as zmq
-from .context import Context
 
 
 class Sender(object):
 
     def __init__(self, socket):
         self._socket = socket
+
+        # gevent定制的Queue
         self._send_queue = gevent.queue.Channel()
+
+        # 通过gevent.spawn创新新的"线程", 异步执行_sender任务
         self._send_task = gevent.spawn(self._sender)
 
     def __del__(self):
@@ -54,7 +59,10 @@ class Sender(object):
 
         # iterator的特殊处理
         for parts in self._send_queue:
-            # 一口气把所有的数据发送完毕，要求数据量不要太大
+            #
+            # 如何发送一个parts呢?
+            # 一个part, 一个part地发送
+            #
             for i in xrange(len(parts) - 1):
                 try:
                     self._socket.send(parts[i], flags=zmq.SNDMORE)
@@ -104,6 +112,7 @@ class Receiver(object):
                     part = self._socket.recv()
 
                 parts.append(part)
+                # 直到没有更多的消息，则算是一个parts的读取完毕
                 if not self._socket.getsockopt(zmq.RCVMORE):
                     break
             if not running:
@@ -190,33 +199,35 @@ class Event(object):
 
 
 class Events(object):
-    """
 
-    """
     def __init__(self, zmq_socket_type, context=None):
         # 默认为: zmq.ROUTER
         self._zmq_socket_type = zmq_socket_type
         self._context = context or Context.get_instance()
 
+        # 通过zmq将请求变成Event
+        # 创建指定类型的_socket, 注意: _send, _recv 的格式, 接受的数据都是以msg为单位的
         self._socket = zmq.Socket(self._context, zmq_socket_type)
 
         self._send = self._socket.send_multipart
         self._recv = self._socket.recv_multipart
 
-        # 发送，读取都租用在同一个 _socket上
+        # 异步发送数据（存在缓存)
+        # 在DEALER/ROUTER模式下，可能有大量的REQ/REP, 需要异步处理
+        # 而普通的REQ/REP则直接block住，按照 lock-step模式进行交互
         if zmq_socket_type in (zmq.PUSH, zmq.PUB, zmq.DEALER, zmq.ROUTER):
-            # 异步发送数据（存在缓存)
             self._send = Sender(self._socket)
+
         if zmq_socket_type in (zmq.PULL, zmq.SUB, zmq.DEALER, zmq.ROUTER):
             self._recv = Receiver(self._socket)
 
-        # _socket主要用于和监听新的请求，并且和client的交互(小数据量)
 
     @property
     def recv_is_available(self):
-        #
-        # 默认情况下: _zmq_socket_type为 zmq.ROUTER
-        #
+        """
+            默认情况下: _zmq_socket_type为 zmq.ROUTER
+        :return:
+        """
         return self._zmq_socket_type in (zmq.PULL, zmq.SUB, zmq.DEALER, zmq.ROUTER)
 
     def __del__(self):
@@ -277,6 +288,8 @@ class Events(object):
         """
         xheader = {} if xheader is None else xheader
         event = Event(name, args, context=self._context)
+
+        # 跳过zmqid
         for k, v in xheader.items():
             if k == 'zmqid':
                 continue

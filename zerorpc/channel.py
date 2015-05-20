@@ -56,6 +56,9 @@ class ChannelMultiplexer(object):
         self._channel_dispatcher_task = None
         self._broadcast_queue = None
 
+        # ignore_broadcast
+        # 在Server端为false, 在Client端为True
+        #
         if events.recv_is_available and not ignore_broadcast:
             # 如果接受 request, 并且响应广播，则创建一个 _broadcast_queue
             # 并且管理 _channel_dispatcher_task
@@ -82,6 +85,11 @@ class ChannelMultiplexer(object):
     def emit(self, name, args, xheader=None):
         return self._events.emit(name, args, xheader)
 
+    #
+    # Server模式下:
+    # 1. _multiplexer.recv 不断接受新的请求, 请的请求来自: _broadcast_queue
+    #
+    #
     def recv(self):
         """
             主动读取event
@@ -89,10 +97,11 @@ class ChannelMultiplexer(object):
 
         # 正常的Server模式下, _broadcast_queue 有效，则recv从 _broadcast_queue 获取数据， 也就是event只和listening fd关联
         if self._broadcast_queue is not None:
-            # 服务区端通过: _broadcast_queue 来获取数据
-            event = self._broadcast_queue.get()
+            event = self._broadcast_queue.get() # 主要是新的连接的event
         else:
             event = self._events.recv()
+
+        # 服务器模式下，只会返回新的连接
         return event
 
     """
@@ -107,6 +116,8 @@ class ChannelMultiplexer(object):
 
             _events的recv是从socket中读取数据, 这里的socket应该是经过封装的，否则底层应该有很多fd(File Descriptor)
         """
+
+        # 异步地从_events中读取event, 并且放在不同的queue中
         while True:
 
             # 读取到event
@@ -120,9 +131,13 @@ class ChannelMultiplexer(object):
 
 
             channel_id = event.header.get('response_to', None)
+            # 为空，表示新的请求
+            # 非空，则表示是后续的跟进
+            #
             queue = None
             # 1. queue/channel就是一个生产者，消费者模式的，往里面写入数据，就会触发它的相关的操作
             if channel_id is not None:
+                # 处理已有的Channel(将event分给不同的Channel)
                 channel = self._active_channels.get(channel_id, None)
                 if channel is not None:
                     queue = channel._queue
@@ -146,10 +161,12 @@ class ChannelMultiplexer(object):
         if self._channel_dispatcher_task is None:
             self._channel_dispatcher_task = gevent.spawn(self._channel_dispatcher)
 
+        # 创建一个Channel?
         return Channel(self, from_event)
 
     @property
     def active_channels(self):
+        # Channel创建时注册，关闭时删除
         return self._active_channels
 
     @property
@@ -158,7 +175,9 @@ class ChannelMultiplexer(object):
 
 
 class Channel(object):
-
+    #
+    # 一个Channel和一个Connection对应，有message_id, zmqid等
+    #
     def __init__(self, multiplexer, from_event=None):
         self._multiplexer = multiplexer
         self._channel_id = None
@@ -194,8 +213,10 @@ class Channel(object):
         :param xheader:
         :return:
         """
+        # 1. 将事件信息添加到event中
         event = self._multiplexer.create_event(name, args, xheader)
 
+        # 2. event和channel绑定
         # 确定: _channel_id
         # 并且关联: channel和event
         #          _channel_id/message_id
@@ -219,6 +240,7 @@ class Channel(object):
     # 获取数据： 数据被放在_queue中
     def recv(self, timeout=None):
         try:
+            # 一直等待?
             event = self._queue.get(timeout=timeout)
         except gevent.queue.Empty:
             raise TimeoutExpired(timeout)
@@ -233,6 +255,8 @@ class BufferedChannel(object):
     """
         BufferedChannel和普通的channel之间的差别?
 
+        基本接口类似，只是BufferedChannel对将Channel的Event暂时缓存起来
+
     """
 
     def __init__(self, channel, inqueue_size=100):
@@ -245,6 +269,8 @@ class BufferedChannel(object):
         self._lost_remote = False
         self._verbose = False
         self._on_close_if = None
+
+        # 异步地从channel中读取数据，放在queue中
         self._recv_task = gevent.spawn(self._recver)
 
     @property
@@ -271,22 +297,26 @@ class BufferedChannel(object):
             self._channel = None
 
     def _recver(self):
+        """
+        从_channel中读取Event, 并且缓存在 _input_queue中，如果queue满了，则报错
+        :return:
+        """
         while True:
             event = self._channel.recv()
             if event.name == '_zpc_more':
                 try:
                     self._remote_queue_open_slots += int(event.args[0])
                 except Exception as e:
-                    logger.error(
-                        'gevent_zerorpc.BufferedChannel._recver, '
-                        'exception: ' + repr(e))
+                    logger.error('gevent_zerorpc.BufferedChannel._recver, exception: ' + repr(e))
+
                 if self._remote_queue_open_slots > 0:
                     self._remote_can_recv.set()
             elif self._input_queue.qsize() == self._input_queue_size:
-                raise RuntimeError(
-                    'BufferedChannel, queue overflow on event:', event)
+                raise RuntimeError('BufferedChannel, queue overflow on event:', event)
             else:
                 self._input_queue.put(event)
+
+                # 根据event来判断是否close
                 if self._on_close_if is not None and self._on_close_if(event):
                     self._recv_task = None
                     self.close()
@@ -316,6 +346,8 @@ class BufferedChannel(object):
     def _request_data(self):
         open_slots = self._input_queue_size - self._input_queue_reserved
         self._input_queue_reserved += open_slots
+
+        # ??
         self._channel.emit('_zpc_more', (open_slots,))
 
     def recv(self, timeout=None):
@@ -325,6 +357,7 @@ class BufferedChannel(object):
         else:
             self._verbose = True
 
+        # 直接从队列中获取数据
         try:
             event = self._input_queue.get(timeout=timeout)
         except gevent.queue.Empty:

@@ -35,9 +35,11 @@ def test_client_connect():
 
         def lolita(self):
             return 42
-    # 创建一个本地的Server
+    # 1. 创建一个本地的Server
     srv = MySrv()
     srv.bind(endpoint)
+
+    # 2. 如何工作呢?
     gevent.spawn(srv.run)
 
     # 从client访问: remote method

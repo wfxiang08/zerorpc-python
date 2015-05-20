@@ -22,19 +22,21 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
+#
+# 处理不同的Pattern
+#
 class ReqRep:
 
     def process_call(self, context, bufchan, req_event, functor):
+        # 初始的event?
         context.hook_server_before_exec(req_event)
 
         # 调用函数
         result = functor(*req_event.args)
 
-        rep_event = bufchan.create_event('OK', (result,),
-                context.hook_get_task_context())
+        rep_event = bufchan.create_event('OK', (result,), context.hook_get_task_context())
 
-        context.hook_server_after_exec(req_event, rep_event)
+        context.hook_server_after_exec(req_event, rep_event) # 处理输出和输出?
 
         # 返回结果
         bufchan.emit_event(rep_event)
@@ -42,12 +44,13 @@ class ReqRep:
     def accept_answer(self, event):
         return True
 
-    def process_answer(self, context, bufchan, req_event, rep_event,
-            handle_remote_error):
+    def process_answer(self, context, bufchan, req_event, rep_event, handle_remote_error):
+        # 如何处理ERR Event
         if rep_event.name == 'ERR':
             exception = handle_remote_error(rep_event)
             context.hook_client_after_request(req_event, rep_event, exception)
             raise exception
+        # 返回结果?
         context.hook_client_after_request(req_event, rep_event)
         bufchan.close()
         result = rep_event.args[0]

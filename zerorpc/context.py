@@ -28,13 +28,20 @@ import random
 
 import gevent_zmq as zmq
 
-
 class Context(zmq.Context):
+    """
+        和zmq.Context相比做了哪些额外的事情呢?
+        1. 计数器
+        2. 中间件
+        3. hooks的引入
+    """
     _instance = None
 
     def __init__(self):
         super(zmq.Context, self).__init__()
+
         self._middlewares = []
+
         self._hooks = {
             'resolve_endpoint': [],
             'load_task_context': [],

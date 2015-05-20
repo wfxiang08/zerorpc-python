@@ -54,8 +54,10 @@ class Socket(_zmq.Socket):
         # NOTE: pyzmq 13.0.0 messed up with setattr (they turned it into a
         # non-op) and you can't assign attributes normally anymore, hence the
         # tricks with self.__dict__ here
+
         self.__dict__["_readable"] = gevent.event.Event()
         self.__dict__["_writable"] = gevent.event.Event()
+
         try:
             # gevent>=1.0
             self.__dict__["_state_event"] = gevent.hub.get_hub().loop.io(
@@ -105,9 +107,13 @@ class Socket(_zmq.Socket):
                     raise
 
     def send(self, data, flags=0, copy=True, track=False):
+
         if flags & _zmq.NOBLOCK:
             return super(Socket, self).send(data, flags, copy, track)
+
+
         flags |= _zmq.NOBLOCK
+
         while True:
             try:
                 msg = super(Socket, self).send(data, flags, copy, track)

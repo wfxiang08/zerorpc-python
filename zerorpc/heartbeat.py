@@ -44,9 +44,11 @@ class HeartBeatOnChannel(object):
            在收到Heartbeat之后都会创建 heartbeat, 只不过差别在于谁先发起任务
     """
     def __init__(self, channel, freq=5, passive=False):
+        # 主角: channel
         self._channel = channel
-        self._heartbeat_freq = freq
 
+
+        self._heartbeat_freq = freq
         self._input_queue = gevent.queue.Channel()
 
         self._remote_last_hb = None
@@ -63,6 +65,24 @@ class HeartBeatOnChannel(object):
         # 默认使用主动心跳
         if not passive:
             self._start_heartbeat()
+
+
+        # 关注:
+        # _start_heartbeat
+        # _heartbeat_task
+        # _recver
+        # _heartbeat
+        #
+        """
+            1. _heartbeat:
+                定时发送心跳，并且检测是否超时
+            2. _start_heartbeat
+                开启心跳任务, 如果任务在心跳时间之前完成，那么: 就不会发送心跳信号，网络也没有额外的开销
+
+            3. _recver
+                异步接受信号，在实现 .recv功能之外，还能处理心跳等信号？
+        """
+
 
     @property
     def recv_is_available(self):
@@ -94,8 +114,8 @@ class HeartBeatOnChannel(object):
             # 检测是否失去heartbeat, 如果失去心跳，则终止当前的连接
             if time.time() > self._remote_last_hb + self._heartbeat_freq * 2:
                 self._lost_remote = True
-                gevent.kill(self._parent_coroutine,
-                        self._lost_remote_exception())
+                # 告诉Parent CoRoutine, 超时了
+                gevent.kill(self._parent_coroutine, self._lost_remote_exception())
                 break
 
             # 发送消息到 Client?
@@ -117,8 +137,10 @@ class HeartBeatOnChannel(object):
                 self._compat_v2 = event.header.get('v', 0) < 3
 
             if event.name == '_zpc_hb':
-                # 处理心跳Event, 如果收到心跳，则主动启动?
+                # 接收到心跳
                 self._remote_last_hb = time.time()
+
+                # 如果是被动心跳，则自己也要主动发起心跳
                 self._start_heartbeat()
 
                 # Skip
@@ -132,12 +154,18 @@ class HeartBeatOnChannel(object):
         return LostRemote('Lost remote after {0}s heartbeat'.format(
             self._heartbeat_freq * 2))
 
+    # create_event, emit_event, emit, recv都是必须实现的，大部分实现只是简单地通过代理模式来处理
     def create_event(self, name, args, xheader=None):
+
+        # 特殊处理心跳信号
         if self._compat_v2 and name == '_zpc_more':
             name = '_zpc_hb'
+
         return self._channel.create_event(name, args, xheader)
 
+
     def emit_event(self, event):
+        # 特殊处理超时信号
         if self._lost_remote:
             raise self._lost_remote_exception()
         self._channel.emit_event(event)
@@ -147,6 +175,7 @@ class HeartBeatOnChannel(object):
         self.emit_event(event)
 
     def recv(self, timeout=None):
+        # 如果超时，也就不再等待
         if self._lost_remote:
             raise self._lost_remote_exception()
 

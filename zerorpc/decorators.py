@@ -35,6 +35,7 @@ class DecoratorBase(object):
         self.__doc__ = functor.__doc__
         self.__name__ = functor.__name__
 
+    # 资料描述符(data-descriptor)
     def __get__(self, instance, type_instance=None):
         if instance is None:
             return self

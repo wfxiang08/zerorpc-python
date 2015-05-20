@@ -22,9 +22,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
-from .context import Context
-from .events import Events
+from __future__ import absolute_import
+from zerorpc.context import Context
+from zerorpc.events import Events
 
 
 class SocketBase(object):
