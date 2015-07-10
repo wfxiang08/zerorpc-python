@@ -11,7 +11,6 @@ from thrift.protocol import TBinaryProtocol
 
 import gevent_zmq as zmq
 from .exceptions import TimeoutExpired, RemoteError
-from .channel import ChannelMultiplexer
 from .socket import SocketBase
 from .context import Context
 
@@ -21,8 +20,9 @@ logger = getLogger(__name__)
 class ServerBase(object):
 
     def __init__(self, events, processor, context=None, pool_size=None):
-        self._multiplexer = ChannelMultiplexer(events)
+        self._events = events # 多次赋值也没啥关系
 
+        # thrift
         self.processor = processor # thrift processor
         self.inputProtocolFactory = TBinaryProtocol.TBinaryProtocolFactory()
         self.outputProtocolFactory = TBinaryProtocol.TBinaryProtocolFactory()
@@ -51,7 +51,7 @@ class ServerBase(object):
         # 不停地接受Event, 并且"并发地"处理Event
         while True:
             # 服务器模式下，只会返回新的连接
-            event = self._multiplexer.recv()
+            event = self._events.recv()
 
             # 读取到event, 将: (_async_task, initial_event）封装成为一个Greenlet, 放入Pool
             #
