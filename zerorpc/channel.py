@@ -1,26 +1,6 @@
 # -*- coding: utf-8 -*-
-# Open Source Initiative OSI - The MIT License (MIT):Licensing
-#
-# The MIT License (MIT)
-# Copyright (c) 2012 DotCloud Inc (opensource@dotcloud.com)
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of
-# this software and associated documentation files (the "Software"), to deal in
-# the Software without restriction, including without limitation the rights to
-# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-# of the Software, and to permit persons to whom the Software is furnished to do
-# so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
+
+from logging import getLogger
 
 import gevent.pool
 import gevent.queue
@@ -30,38 +10,24 @@ import gevent.lock
 
 from .exceptions import TimeoutExpired
 
-from logging import getLogger
-
 logger = getLogger(__name__)
-
-"""
-    gevent模型中:
-
-    1. 所有的函数都被封装成为Event
-    2. Event有两种状态: 正常执行代码，等待某种资源(这种等待被转换成为两种模型，基于io fd(File Description的等待), 或者基于timeout的等待)
-
-"""
 
 
 class ChannelMultiplexer(object):
-    # Events对象
-    def __init__(self, events, ignore_broadcast=False):
+    def __init__(self, events, is_client=False):
         """
         :param events:
-        :param ignore_broadcast: 服务器端为False, 客户端为True
-        :return:
+        :param is_client:
+            服务器端为False
+            客户端为True
         """
         self._events = events
         self._active_channels = {}
         self._channel_dispatcher_task = None
         self._broadcast_queue = None
 
-        # ignore_broadcast
-        # 在Server端为false, 在Client端为True
-        #
-        if events.recv_is_available and not ignore_broadcast:
-            # 如果接受 request, 并且响应广播，则创建一个 _broadcast_queue
-            # 并且管理 _channel_dispatcher_task
+        if events.recv_is_available and not is_client:
+            # 服务器端专门启用一个greenlet 来
             self._broadcast_queue = gevent.queue.Queue(maxsize=1)
             self._channel_dispatcher_task = gevent.spawn(self._channel_dispatcher)
 
@@ -85,11 +51,6 @@ class ChannelMultiplexer(object):
     def emit(self, name, args, xheader=None):
         return self._events.emit(name, args, xheader)
 
-    #
-    # Server模式下:
-    # 1. _multiplexer.recv 不断接受新的请求, 请的请求来自: _broadcast_queue
-    #
-    #
     def recv(self):
         """
             主动读取event
@@ -104,55 +65,34 @@ class ChannelMultiplexer(object):
         # 服务器模式下，只会返回新的连接
         return event
 
-    """
-        _channel_dispatcher 和 recv 的关系
-    """
     def _channel_dispatcher(self):
-        """
-            从 self._events中读取event，并且dispatch到不同的Channel中, 东西直接放在 Channel对应的queue中
 
-            和 _channel_dispatcher_task 对应，在一个Event内部执行，而: _events.recv 也是被 gevent驱动的
-
-
-            _events的recv是从socket中读取数据, 这里的socket应该是经过封装的，否则底层应该有很多fd(File Descriptor)
-        """
-
-        # 异步地从_events中读取event, 并且放在不同的queue中
         while True:
-
-            # 读取到event
+            # 1. 读取到event
             try:
                 event = self._events.recv()
             except Exception as e:
-                logger.error(
-                    'zerorpc.ChannelMultiplexer, '
-                    'ignoring error on recv: {0}'.format(e))
+                logger.error('zerorpc.ChannelMultiplexer, ignoring error on recv: {0}'.format(e))
                 continue
 
 
+            # 2. 如何处理event呢?
+            #    将新的event交给: channel_id对应的queue, 或者_broadcast_queue中
             channel_id = event.header.get('response_to', None)
-            # 为空，表示新的请求
-            # 非空，则表示是后续的跟进
-            #
+
             queue = None
-            # 1. queue/channel就是一个生产者，消费者模式的，往里面写入数据，就会触发它的相关的操作
             if channel_id is not None:
-                # 处理已有的Channel(将event分给不同的Channel)
                 channel = self._active_channels.get(channel_id, None)
                 if channel is not None:
                     queue = channel._queue
 
-            # 2. 如果没有: response_to, 则表示是一个新的Event, 需要创建一个新的Channel
+            #  如果没有: response_to, 则表示是一个新的Event, 需要创建一个新的Channel
             elif self._broadcast_queue is not None:
                 queue = self._broadcast_queue
 
             if queue is None:
-                logger.error(
-                    'zerorpc.ChannelMultiplexer, '
-                    'unable to route event: {0}'
-                    .format(event.__str__(ignore_args=True)))
+                logger.error('zerorpc.ChannelMultiplexer, unable to route event: {0}'.format(event.__str__(ignore_args=True)))
             else:
-                # 将event交给对应的queue
                 queue.put(event)
 
     def channel(self, from_event=None):
@@ -175,9 +115,9 @@ class ChannelMultiplexer(object):
 
 
 class Channel(object):
-    #
-    # 一个Channel和一个Connection对应，有message_id, zmqid等
-    #
+    """
+        Channel和一个Event对应
+    """
     def __init__(self, multiplexer, from_event=None):
         self._multiplexer = multiplexer
         self._channel_id = None

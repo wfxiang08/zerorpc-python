@@ -305,17 +305,13 @@ class Events(object):
         :param identity:
         :return:
         """
-        # if identity:
-        #     print get_stack_info()
-        #     print "identity: ", identity
-
         if identity is not None:
             # 带有identity的情况
             parts = list(identity)
             parts.extend(['', event.pack()])
 
         elif self._zmq_socket_type in (zmq.DEALER, zmq.ROUTER):
-            # DEALER, ROUTER的parts包装
+            # 都以: REQ为标准，数据统一处理为: ("", data)
             parts = ('', event.pack())
         else:
 

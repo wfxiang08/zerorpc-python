@@ -15,25 +15,25 @@ from .exceptions import TimeoutExpired, RemoteError, LostRemote
 from .channel import ChannelMultiplexer
 from .socket import SocketBase
 from .context import Context
-import patterns
 
 
 logger = getLogger(__name__)
 
 class ServerBase(object):
 
-    def __init__(self, channel, processor, name=None, context=None, pool_size=None):
-        self._multiplexer = ChannelMultiplexer(channel)
+    def __init__(self, events, processor, context=None, pool_size=None):
+        self._multiplexer = ChannelMultiplexer(events)
+
         self.processor = processor # thrift processor
-
-        self._context = context or Context.get_instance()
-        self._name = name or self._extract_name()
-
-        self._task_pool = gevent.pool.Pool(size=pool_size)
-        self._acceptor_task = None
-
         self.inputProtocolFactory = TBinaryProtocol.TBinaryProtocolFactory()
         self.outputProtocolFactory = TBinaryProtocol.TBinaryProtocolFactory()
+
+        # zeromq
+        self._context = context or Context.get_instance()
+
+        # gevent
+        self._task_pool = gevent.pool.Pool(size=pool_size)
+        self._acceptor_task = None
 
 
     def close(self):
@@ -52,31 +52,17 @@ class ServerBase(object):
         # 访问dict的对应方法
         return self._methods[method](*args)
 
-    def _print_traceback(self, protocol_v1, exc_infos):
+    def _print_traceback(self, exc_infos):
         logger.exception('')
 
         exc_type, exc_value, exc_traceback = exc_infos
-        if protocol_v1:
-            return (repr(exc_value),)
+
         human_traceback = traceback.format_exc()
         name = exc_type.__name__
         human_msg = str(exc_value)
         return (name, human_msg, human_traceback)
 
     def _async_task(self, initial_event):
-        """
-            读取到一个event之后, 就创建一个_async_task(task执行完毕，则自动删除)
-
-            该Event会使用一个独立的 fd 和client进行通信
-            fd = socket_fd.listen()
-
-
-            同时在该链接上创建一个: HeartBeatOnChannel的Event, 通过心跳保持连接
-        """
-        protocol_v1 = initial_event.header.get('v', 1) < 2
-
-        # 将event和channel关联
-        #
 
         # 新的Event?
         # 这个地方是不是有bug, 后?
@@ -84,7 +70,7 @@ class ServerBase(object):
 
         exc_infos = None
 
-        # 或者这个地方?
+        # 第一个event就是: initial_event, 后续的event会如何处理呢？
         event = channel.recv()
 
         try:
@@ -103,10 +89,10 @@ class ServerBase(object):
         except LostRemote:
             # 失去Client心跳
             exc_infos = list(sys.exc_info())
-            self._print_traceback(protocol_v1, exc_infos)
+            # self._print_traceback(protocol_v1, exc_infos)
         except Exception:
             exc_infos = list(sys.exc_info())
-            human_exc_infos = self._print_traceback(protocol_v1, exc_infos)
+            human_exc_infos = self._print_traceback(exc_infos)
 
             reply_event = channel.create_event('ERR', human_exc_infos, self._context.hook_get_task_context())
             self._context.hook_server_inspect_exception(event, reply_event, exc_infos)
@@ -116,7 +102,10 @@ class ServerBase(object):
             channel.close()
 
     def _acceptor(self):
-
+        # run
+        #    ---> _acceptor
+        #                   ---> _async_task
+        #
         # 不停地接受Event, 并且"并发地"处理Event
         while True:
             # 服务器模式下，只会返回新的连接
@@ -133,22 +122,14 @@ class ServerBase(object):
             self._task_pool.spawn(self._async_task, initial_event)
 
     def run(self):
-        """
-            _acceptor作为一个fd的操作，被封装成为一个event
-
-            大致的工作模式:
-                _acceptor不定地运转， 直接由 gevent来调度，然后得到的initial_event交给 _task_pool去统一调度
-
-        """
+        # 1. 异步接受新的zeromq message
         self._acceptor_task = gevent.spawn(self._acceptor)
+
+        # 2. 等待结束
         try:
-            # 返回: greenlet的结果
-            #      一般_acceptor为死循环，因此会一直堵在这个地方
             self._acceptor_task.get()
         finally:
             self.stop()
-
-            # 等待所有的事情做完了，则关闭服务
             self._task_pool.join(raise_error=True)
 
     def stop(self):
