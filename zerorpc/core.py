@@ -1,89 +1,30 @@
 # -*- coding: utf-8 -*-
-# Open Source Initiative OSI - The MIT License (MIT):Licensing
-#
-# The MIT License (MIT)
-# Copyright (c) 2012 DotCloud Inc (opensource@dotcloud.com)
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of
-# this software and associated documentation files (the "Software"), to deal in
-# the Software without restriction, including without limitation the rights to
-# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-# of the Software, and to permit persons to whom the Software is furnished to do
-# so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-
-
 import sys
 import traceback
+from logging import getLogger
+
 import gevent.pool
 import gevent.queue
 import gevent.event
 import gevent.local
 import gevent.lock
+from thrift.protocol import TBinaryProtocol
 
 import gevent_zmq as zmq
 from .exceptions import TimeoutExpired, RemoteError, LostRemote
-from .channel import ChannelMultiplexer, BufferedChannel
+from .channel import ChannelMultiplexer
 from .socket import SocketBase
-from .heartbeat import HeartBeatOnChannel
 from .context import Context
-from .decorators import DecoratorBase, rep
 import patterns
-from logging import getLogger
+
 
 logger = getLogger(__name__)
 
-"""
-
-    Server
-        SocketBase
-            _events --> _multiplexer
-            _bind/_connect
-            _context
-
-        ServerBase
-            _multiplexer: ChannelMultiplexer
-            _methods
-            __call__: --> _methods call
-
-            _task_pool -->
-                          _acceptor_task: _acceptor
-                          _async_task
-
-
-    gevent的学习:
-        http://xlambda.com/gevent-tutorial/
-
-
-    greenlet
-        Event/Threads 类似的概念
-
-
-    Server:
-        run:
-           _acceptor_task: _acceptor
-
-"""
-
 class ServerBase(object):
 
-    def __init__(self, channel, methods=None, name=None, context=None,
-            pool_size=None, heartbeat=5):
-        # self._events
+    def __init__(self, channel, processor, name=None, context=None, pool_size=None):
         self._multiplexer = ChannelMultiplexer(channel)
-
-        if methods is None:
-            methods = self
+        self.processor = processor # thrift processor
 
         self._context = context or Context.get_instance()
         self._name = name or self._extract_name()
@@ -91,71 +32,15 @@ class ServerBase(object):
         self._task_pool = gevent.pool.Pool(size=pool_size)
         self._acceptor_task = None
 
-        self._methods = self._filter_methods(ServerBase, self, methods)
+        self.inputProtocolFactory = TBinaryProtocol.TBinaryProtocolFactory()
+        self.outputProtocolFactory = TBinaryProtocol.TBinaryProtocolFactory()
 
-        self._inject_builtins()
-        self._heartbeat_freq = heartbeat
-
-        # _methods如何处理
-        # self documented
-        for (k, functor) in self._methods.items():
-            if not isinstance(functor, DecoratorBase):
-                self._methods[k] = rep(functor)
-
-    @staticmethod
-    def _filter_methods(cls, self, methods):
-        #
-        # 期待返回一个: dict
-        #
-        if hasattr(methods, '__getitem__'):
-            return methods
-
-        # 出现在methods, 但是不出现在： ServerBase 方法列表中
-        server_methods = set(getattr(self, k) for k in dir(cls) if not
-                             k.startswith('_'))
-        return dict((k, getattr(methods, k))
-                    for k in dir(methods)
-                    if (callable(getattr(methods, k))
-                        and not k.startswith('_')
-                        and getattr(methods, k) not in server_methods
-                        ))
-
-    @staticmethod
-    def _extract_name(methods):
-        return getattr(type(methods), '__name__', None) or repr(methods)
 
     def close(self):
         self.stop()
         self._multiplexer.close()
 
-    def _format_args_spec(self, args_spec, r=None):
-        if args_spec:
-            r = [dict(name=name) for name in args_spec[0]]
-            default_values = args_spec[3]
-            if default_values is not None:
-                for arg, def_val in zip(reversed(r), reversed(default_values)):
-                    arg['default'] = def_val
-        return r
 
-    def _zerorpc_inspect(self):
-        methods = dict((m, f) for m, f in self._methods.items()
-                    if not m.startswith('_'))
-        detailled_methods = dict((m,
-            dict(args=self._format_args_spec(f._zerorpc_args()),
-                doc=f._zerorpc_doc())) for (m, f) in methods.items())
-        return {'name': self._name,
-                'methods': detailled_methods}
-
-    def _inject_builtins(self):
-        self._methods['_zerorpc_list'] = lambda: [m for m in self._methods
-                if not m.startswith('_')]
-        self._methods['_zerorpc_name'] = lambda: self._name
-        self._methods['_zerorpc_ping'] = lambda: ['pong', self._name]
-        self._methods['_zerorpc_help'] = lambda m: \
-            self._methods[m]._zerorpc_doc()
-        self._methods['_zerorpc_args'] = \
-            lambda m: self._methods[m]._zerorpc_args()
-        self._methods['_zerorpc_inspect'] = self._zerorpc_inspect
 
     def __call__(self, method, *args):
         """
@@ -197,13 +82,10 @@ class ServerBase(object):
         # 这个地方是不是有bug, 后?
         channel = self._multiplexer.channel(initial_event)
 
-        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq, passive=protocol_v1)
-
-        bufchan = BufferedChannel(hbchan)
         exc_infos = None
 
         # 或者这个地方?
-        event = bufchan.recv()
+        event = channel.recv()
 
         try:
             self._context.hook_load_task_context(event.header)
@@ -216,7 +98,7 @@ class ServerBase(object):
             # ReqRep#process_call
             # 将functor交给: bufchan去处理
             #
-            functor.pattern.process_call(self._context, bufchan, event, functor)
+            functor.pattern.process_call(self._context, channel, event, functor)
 
         except LostRemote:
             # 失去Client心跳
@@ -226,12 +108,12 @@ class ServerBase(object):
             exc_infos = list(sys.exc_info())
             human_exc_infos = self._print_traceback(protocol_v1, exc_infos)
 
-            reply_event = bufchan.create_event('ERR', human_exc_infos, self._context.hook_get_task_context())
+            reply_event = channel.create_event('ERR', human_exc_infos, self._context.hook_get_task_context())
             self._context.hook_server_inspect_exception(event, reply_event, exc_infos)
-            bufchan.emit_event(reply_event)
+            channel.emit_event(reply_event)
         finally:
             del exc_infos
-            bufchan.close()
+            channel.close()
 
     def _acceptor(self):
 
@@ -339,30 +221,28 @@ class ClientBase(object):
 
         # 1. 构建Channel
         channel = self._multiplexer.channel()
-        hbchan = HeartBeatOnChannel(channel, freq=self._heartbeat_freq, passive=self._passive_heartbeat)
-        bufchan = BufferedChannel(hbchan, inqueue_size=kargs.get('slots', 100))
 
 
         # 2. 各种hook的作用?
         xheader = self._context.hook_get_task_context()
 
         # 3. 如何创建event, 然后如何获得回调?
-        request_event = bufchan.create_event(method, args, xheader)
+        request_event = channel.create_event(method, args, xheader)
 
         self._context.hook_client_before_request(request_event)
 
         # 4. 发送请求
-        bufchan.emit_event(request_event)
+        channel.emit_event(request_event)
 
         # 5. 处理response(同步等待，或异步等待)
         try:
             # 如果是同步的?
             if kargs.get('async', False) is False:
-                return self._process_response(request_event, bufchan, timeout)
+                return self._process_response(request_event, channel, timeout)
             else:
                 # 异步如何处理呢?
                 async_result = gevent.event.AsyncResult()
-                gevent.spawn(self._process_response, request_event, bufchan, timeout).link(async_result)
+                gevent.spawn(self._process_response, request_event, channel, timeout).link(async_result)
                 return async_result
         except:
             # XXX: This is going to be closed twice if async is false and
@@ -370,7 +250,7 @@ class ClientBase(object):
             # async branch can raise an exception too, if no we can just remove
             # this code.
             # 可能出现超时等异常?
-            bufchan.close()
+            channel.close()
             raise
 
     def __getattr__(self, method):

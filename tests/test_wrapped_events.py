@@ -62,64 +62,64 @@ def test_sub_events():
     server_events.close()
     client_events.close()
 
-
-def test_multiple_sub_events():
-    endpoint = random_ipc_endpoint()
-    server_events = zerorpc.Events(zmq.ROUTER)
-    server_events.bind(endpoint)
-    server = zerorpc.ChannelMultiplexer(server_events)
-
-    client_events = zerorpc.Events(zmq.DEALER)
-    client_events.connect(endpoint)
-    client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
-
-    client_channel1 = client.channel()
-    client_channel_events1 = zerorpc.WrappedEvents(client_channel1)
-    client_channel2 = zerorpc.BufferedChannel(client.channel())
-    client_channel_events2 = zerorpc.WrappedEvents(client_channel2)
-
-    def emitstuff():
-        client_channel_events1.emit('coucou1', 43)
-        client_channel_events2.emit('coucou2', 44)
-        client_channel_events2.emit('another', 42)
-    gevent.spawn(emitstuff)
-
-    event = server.recv()
-    print event
-    assert isinstance(event.args, (list, tuple))
-    assert event.name == 'w'
-    subevent = event.args
-    print 'subevent:', subevent
-    server_channel = server.channel(event)
-    server_channel_events = zerorpc.WrappedEvents(server_channel)
-    event = server_channel_events.recv()
-    print 'ch1:', event
-    assert event.name == 'coucou1'
-    assert event.args == 43
-
-    event = server.recv()
-    print event
-    assert isinstance(event.args, (list, tuple))
-    assert event.name == 'w'
-    subevent = event.args
-    print 'subevent:', subevent
-    server_channel = server.channel(event)
-
-    server_channel_events = zerorpc.BufferedChannel(server_channel)
-    server_channel_events = zerorpc.WrappedEvents(server_channel_events)
-    event = server_channel_events.recv()
-    print 'ch2:', event
-    assert event.name == 'coucou2'
-    assert event.args == 44
-
-    event = server_channel_events.recv()
-    print 'ch2:', event
-    assert event.name == 'another'
-    assert event.args == 42
-
-    server_events.close()
-    client_events.close()
-
+#
+# def test_multiple_sub_events():
+#     endpoint = random_ipc_endpoint()
+#     server_events = zerorpc.Events(zmq.ROUTER)
+#     server_events.bind(endpoint)
+#     server = zerorpc.ChannelMultiplexer(server_events)
+#
+#     client_events = zerorpc.Events(zmq.DEALER)
+#     client_events.connect(endpoint)
+#     client = zerorpc.ChannelMultiplexer(client_events, ignore_broadcast=True)
+#
+#     client_channel1 = client.channel()
+#     client_channel_events1 = zerorpc.WrappedEvents(client_channel1)
+#     client_channel2 = zerorpc.BufferedChannel(client.channel())
+#     client_channel_events2 = zerorpc.WrappedEvents(client_channel2)
+#
+#     def emitstuff():
+#         client_channel_events1.emit('coucou1', 43)
+#         client_channel_events2.emit('coucou2', 44)
+#         client_channel_events2.emit('another', 42)
+#     gevent.spawn(emitstuff)
+#
+#     event = server.recv()
+#     print event
+#     assert isinstance(event.args, (list, tuple))
+#     assert event.name == 'w'
+#     subevent = event.args
+#     print 'subevent:', subevent
+#     server_channel = server.channel(event)
+#     server_channel_events = zerorpc.WrappedEvents(server_channel)
+#     event = server_channel_events.recv()
+#     print 'ch1:', event
+#     assert event.name == 'coucou1'
+#     assert event.args == 43
+#
+#     event = server.recv()
+#     print event
+#     assert isinstance(event.args, (list, tuple))
+#     assert event.name == 'w'
+#     subevent = event.args
+#     print 'subevent:', subevent
+#     server_channel = server.channel(event)
+#
+#     server_channel_events = zerorpc.BufferedChannel(server_channel)
+#     server_channel_events = zerorpc.WrappedEvents(server_channel_events)
+#     event = server_channel_events.recv()
+#     print 'ch2:', event
+#     assert event.name == 'coucou2'
+#     assert event.args == 44
+#
+#     event = server_channel_events.recv()
+#     print 'ch2:', event
+#     assert event.name == 'another'
+#     assert event.args == 42
+#
+#     server_events.close()
+#     client_events.close()
+#
 
 def test_recursive_multiplexer():
     endpoint = random_ipc_endpoint()
