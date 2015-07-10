@@ -10,7 +10,7 @@ import gevent.lock
 from thrift.protocol import TBinaryProtocol
 
 import gevent_zmq as zmq
-from .exceptions import TimeoutExpired, RemoteError
+from .exceptions import TimeoutExpired
 from .socket import SocketBase
 from .context import Context
 
@@ -37,31 +37,20 @@ class ServerBase(object):
 
     def close(self):
         self.stop()
-        self._multiplexer.close()
 
 
-    def _async_task(self, event):
+    def _handle_request(self, event):
+        # 得到event之后就要处理
         pass
 
     def _acceptor(self):
         # run
         #    ---> _acceptor
-        #                   ---> _async_task
+        #                   ---> _handle_request
         #
-        # 不停地接受Event, 并且"并发地"处理Event
         while True:
-            # 服务器模式下，只会返回新的连接
             event = self._events.recv()
-
-            # 读取到event, 将: (_async_task, initial_event）封装成为一个Greenlet, 放入Pool
-            #
-            # Greenlet可以认为类似一个thread, 在spawn之后就会被自动执行
-            # _task_pool 将部分greenlet自动管理，限制最大的并发度
-            #
-
-            # 对于Server, 监听新的events
-            # 对于Client, 监听所有的数据(SKIP, 因为在Server中)
-            self._task_pool.spawn(self._async_task, event)
+            self._task_pool.spawn(self._handle_request, event)
 
     def run(self):
         # 1. 异步接受新的zeromq message
@@ -85,34 +74,15 @@ class ClientBase(object):
     # 默认： passive_heartbeat = False， 被动心跳
     def __init__(self, channel, context=None, timeout=30, heartbeat=5, passive_heartbeat=False):
 
-        self._multiplexer = ChannelMultiplexer(channel, is_client=True)
+        # self._multiplexer = ChannelMultiplexer(channel, is_client=True)
 
         self._context = context or Context.get_instance()
         self._timeout = timeout
         self._heartbeat_freq = heartbeat
         self._passive_heartbeat = passive_heartbeat
 
-    def close(self):
-        self._multiplexer.close()
 
-    def _handle_remote_error(self, event):
-        exception = self._context.hook_client_handle_remote_error(event)
-        if not exception:
-            if event.header.get('v', 1) >= 2:
-                (name, msg, traceback) = event.args
-                exception = RemoteError(name, msg, traceback)
-            else:
-                (msg,) = event.args
-                exception = RemoteError('RemoteError', msg, None)
 
-        return exception
-
-    def _select_pattern(self, event):
-        for pattern in patterns.patterns_list:
-            if pattern.accept_answer(event):
-                return pattern
-        msg = 'Unable to find a pattern for: {0}'.format(event)
-        raise RuntimeError(msg)
 
     def _process_response(self, request_event, bufchan, timeout):
         try:
