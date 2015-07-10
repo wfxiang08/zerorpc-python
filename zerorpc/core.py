@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import sys
-import traceback
 from logging import getLogger
 
 import gevent.pool
@@ -11,7 +10,7 @@ import gevent.lock
 from thrift.protocol import TBinaryProtocol
 
 import gevent_zmq as zmq
-from .exceptions import TimeoutExpired, RemoteError, LostRemote
+from .exceptions import TimeoutExpired, RemoteError
 from .channel import ChannelMultiplexer
 from .socket import SocketBase
 from .context import Context
@@ -41,65 +40,8 @@ class ServerBase(object):
         self._multiplexer.close()
 
 
-
-    def __call__(self, method, *args):
-        """
-        如何执行方法调用:
-        """
-        if method not in self._methods:
-            raise NameError(method)
-
-        # 访问dict的对应方法
-        return self._methods[method](*args)
-
-    def _print_traceback(self, exc_infos):
-        logger.exception('')
-
-        exc_type, exc_value, exc_traceback = exc_infos
-
-        human_traceback = traceback.format_exc()
-        name = exc_type.__name__
-        human_msg = str(exc_value)
-        return (name, human_msg, human_traceback)
-
-    def _async_task(self, initial_event):
-
-        # 新的Event?
-        # 这个地方是不是有bug, 后?
-        channel = self._multiplexer.channel(initial_event)
-
-        exc_infos = None
-
-        # 第一个event就是: initial_event, 后续的event会如何处理呢？
-        event = channel.recv()
-
-        try:
-            self._context.hook_load_task_context(event.header)
-
-            # 一般的Task是调用某个函数
-            functor = self._methods.get(event.name, None)
-            if functor is None:
-                raise NameError(event.name)
-
-            # ReqRep#process_call
-            # 将functor交给: bufchan去处理
-            #
-            functor.pattern.process_call(self._context, channel, event, functor)
-
-        except LostRemote:
-            # 失去Client心跳
-            exc_infos = list(sys.exc_info())
-            # self._print_traceback(protocol_v1, exc_infos)
-        except Exception:
-            exc_infos = list(sys.exc_info())
-            human_exc_infos = self._print_traceback(exc_infos)
-
-            reply_event = channel.create_event('ERR', human_exc_infos, self._context.hook_get_task_context())
-            self._context.hook_server_inspect_exception(event, reply_event, exc_infos)
-            channel.emit_event(reply_event)
-        finally:
-            del exc_infos
-            channel.close()
+    def _async_task(self, event):
+        pass
 
     def _acceptor(self):
         # run
@@ -109,7 +51,7 @@ class ServerBase(object):
         # 不停地接受Event, 并且"并发地"处理Event
         while True:
             # 服务器模式下，只会返回新的连接
-            initial_event = self._multiplexer.recv()
+            event = self._multiplexer.recv()
 
             # 读取到event, 将: (_async_task, initial_event）封装成为一个Greenlet, 放入Pool
             #
@@ -119,7 +61,7 @@ class ServerBase(object):
 
             # 对于Server, 监听新的events
             # 对于Client, 监听所有的数据(SKIP, 因为在Server中)
-            self._task_pool.spawn(self._async_task, initial_event)
+            self._task_pool.spawn(self._async_task, event)
 
     def run(self):
         # 1. 异步接受新的zeromq message
@@ -143,7 +85,7 @@ class ClientBase(object):
     # 默认： passive_heartbeat = False， 被动心跳
     def __init__(self, channel, context=None, timeout=30, heartbeat=5, passive_heartbeat=False):
 
-        self._multiplexer = ChannelMultiplexer(channel, ignore_broadcast=True)
+        self._multiplexer = ChannelMultiplexer(channel, is_client=True)
 
         self._context = context or Context.get_instance()
         self._timeout = timeout
