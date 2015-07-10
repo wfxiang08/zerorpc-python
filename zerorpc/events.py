@@ -22,7 +22,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
+from __future__ import absolute_import
 import msgpack
 import gevent.pool
 import gevent.queue
@@ -30,14 +30,15 @@ import gevent.event
 import gevent.local
 import gevent.lock
 
-from __future__ import absolute_import
 from zerorpc.context import Context
 
-import gevent_zmq as zmq
+import zerorpc.gevent_zmq as zmq
 
 
 class Sender(object):
-
+    """
+        模拟: zeromq.Socket的send函数
+    """
     def __init__(self, socket):
         self._socket = socket
 
@@ -57,16 +58,15 @@ class Sender(object):
     def _sender(self):
         running = True
 
-        # iterator的特殊处理
+        # iterator的特殊处理, 每次iterator，都会将数据从queue中读取出来
         for parts in self._send_queue:
-            #
-            # 如何发送一个parts呢?
-            # 一个part, 一个part地发送
-            #
+
+            # 如何发送一个parts呢? 一个part, 一个part地发送
             for i in xrange(len(parts) - 1):
                 try:
                     self._socket.send(parts[i], flags=zmq.SNDMORE)
                 except gevent.GreenletExit:
+                    # Greenlet即将退出之前, 确保一个完整的message被发送出去
                     if i == 0:
                         return
                     running = False
@@ -108,7 +108,7 @@ class Receiver(object):
                     if len(parts) == 0:
                         return
 
-                    # 什么情况?
+                    # 继续读取数据，直到一个完整的消息被读取完毕
                     part = self._socket.recv()
 
                 parts.append(part)
@@ -176,8 +176,7 @@ class Event(object):
         try:
             (header, name, args) = unpacked_msg
         except Exception as e:
-            raise Exception('invalid msg format "{0}": {1}'.format(
-                unpacked_msg, e))
+            raise Exception('invalid msg format "{0}": {1}'.format(unpacked_msg, e))
 
         # Backward compatibility
         if not isinstance(header, dict):
@@ -199,6 +198,9 @@ class Event(object):
 
 
 class Events(object):
+    """
+        Events内部管理: zmq.Socket
+    """
 
     def __init__(self, zmq_socket_type, context=None):
         # 默认为: zmq.ROUTER

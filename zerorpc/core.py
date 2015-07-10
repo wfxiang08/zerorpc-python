@@ -412,9 +412,9 @@ class Client(SocketBase, ClientBase):
 
     def __init__(self, connect_to=None, context=None, timeout=30, heartbeat=5,
             passive_heartbeat=False):
+        # DEALER 可以同时接受多个请求?
         SocketBase.__init__(self, zmq.DEALER, context=context)
-        ClientBase.__init__(self, self._events, context, timeout, heartbeat,
-                passive_heartbeat)
+        ClientBase.__init__(self, self._events, context, timeout, heartbeat, passive_heartbeat)
 
         # 在初始化是创建连接
         if connect_to:

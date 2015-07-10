@@ -100,12 +100,15 @@ def setup_links(args, socket):
         addresses.append(args.address)
     if args.connect:
         addresses.extend(args.connect)
+
+    # socket也可以connect?
     for endpoint in addresses:
         print 'connecting to "{0}"'.format(endpoint)
         socket.connect(endpoint)
 
 
 def run_server(args):
+    # 例如: zerorpc --server --bind tcp://*:1234 time
     server_obj_path = args.command
 
     sys.path.insert(0, os.getcwd())

@@ -37,9 +37,12 @@ def main():
     # 如果device_type为queue, 则如何工作呢?
     device_type = device_map[type_]
 
+    # 外部的client直接连接到input?
     # 创建input/output
     input_ = context.socket(device_type.input)
     input_.bind(config['in'])
+
+    # 数据如何导入到zerorpc呢?
     if type_ == 'forwarder':
         input_.setsockopt(zmq.SUBSCRIBE, '')
     output = context.socket(device_type.output)
