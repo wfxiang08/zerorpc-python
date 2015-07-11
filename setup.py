@@ -15,6 +15,7 @@ except ImportError:
 requirements = [
     'gevent>=1.0',
     'pyzmq==13.1.0'
+    'thrift==0.9.2',
 ]
 if sys.version_info < (2, 7):
     requirements.append('argparse')
@@ -26,7 +27,7 @@ setup(
     description='zerorpc is a flexible RPC based on zeromq.',
     author=__author__,
     url='https://github.com/dotcloud/zerorpc-python',
-    packages=['zerorpc'],
+    packages=['zerorpc', 'zerorpc.core'],
     install_requires=requirements,
     tests_require=['nose'],
     test_suite='nose.collector',

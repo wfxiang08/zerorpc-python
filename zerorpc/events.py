@@ -246,7 +246,7 @@ class Events(object):
             parts = (event.msg,)
         self._send(parts)
 
-    def emit(self, msg, id):
+    def emit(self, msg, id = None):
         event = self.create_event(msg, id)
         return self.emit_event(event, id)
 

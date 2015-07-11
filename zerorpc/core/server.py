@@ -91,21 +91,9 @@ class Server(SocketBase, ServerBase):
         Server是如何实现的
         主要是API, 如何将ServerBase的框架和Methods等结合起来
     """
-    def __init__(self, methods=None, name=None, context=None, pool_size=None,
-            heartbeat=5):
+    def __init__(self, processor=None, context=None, pool_size=None):
         SocketBase.__init__(self, zmq.ROUTER, context)
-
-        # 两种做法:
-        # 1. 扩展Server
-        # 2. 定义一个新的对象: methods, 例如: methods = RPCObject()
-        if methods is None:
-            methods = self
-
-        name = name or ServerBase._extract_name(methods)
-
-        methods = ServerBase._filter_methods(Server, self, methods)
-
-        ServerBase.__init__(self, self._events, methods, name, context, pool_size, heartbeat)
+        ServerBase.__init__(self, self._events, processor, context, pool_size)
 
     def close(self):
         ServerBase.close(self)
