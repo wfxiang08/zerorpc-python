@@ -1,29 +1,7 @@
 # -*- coding: utf-8 -*-
-# Open Source Initiative OSI - The MIT License (MIT):Licensing
-#
-# The MIT License (MIT)
-# Copyright (c) 2012 DotCloud Inc (opensource@dotcloud.com)
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy of
-# this software and associated documentation files (the "Software"), to deal in
-# the Software without restriction, including without limitation the rights to
-# use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-# of the Software, and to permit persons to whom the Software is furnished to do
-# so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
 
 from __future__ import absolute_import
-import msgpack
+
 import gevent.pool
 import gevent.queue
 import gevent.event
@@ -31,7 +9,6 @@ import gevent.local
 import gevent.lock
 
 from zerorpc.context import Context
-
 import zerorpc.gevent_zmq as zmq
 
 
@@ -131,70 +108,27 @@ class Event(object):
         将name, _args, _header进行打包
     """
 
-    __slots__ = ['_name', '_args', '_header']
+    __slots__ = ['_data', '_id']
 
-    def __init__(self, name, args, context, header=None):
-        self._name = name
-        self._args = args
+    def __init__(self, thrift_data, id=None):
+        self._data = thrift_data
+        self._id = id
 
-        if header is None:
-            self._header = {
-                # 生成新的msgid
-                'message_id': context.new_msgid(),
-                'v': 3
-            }
-        else:
-            self._header = header
 
     @property
-    def header(self):
-        return self._header
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, v):
+        self._data = v
 
     @property
-    def name(self):
-        return self._name
-
-    @name.setter
-    def name(self, v):
-        self._name = v
-
-    @property
-    def args(self):
-        return self._args
-
-    # 将参数打包
-    def pack(self):
-        return msgpack.Packer().pack((self._header, self._name, self._args))
-
-    # 解压缩参数
-    @staticmethod
-    def unpack(blob):
-        unpacker = msgpack.Unpacker()
-        unpacker.feed(blob)
-        unpacked_msg = unpacker.unpack()
-
-        try:
-            (header, name, args) = unpacked_msg
-        except Exception as e:
-            raise Exception('invalid msg format "{0}": {1}'.format(unpacked_msg, e))
-
-        # Backward compatibility
-        if not isinstance(header, dict):
-            header = {}
-
-        return Event(name, args, None, header)
+    def id(self):
+        return self._id
 
     def __str__(self, ignore_args=False):
-        if ignore_args:
-            args = '[...]'
-        else:
-            args = self._args
-            try:
-                args = '<<{0}>>'.format(str(self.unpack(self._args)))
-            except:
-                pass
-        return '{0} {1} {2}'.format(self._name, self._header,
-                args)
+        return "Thrift Event"
 
 
 class Events(object):
@@ -280,7 +214,7 @@ class Events(object):
             r.append(self._socket.bind(endpoint_))
         return r
 
-    def create_event(self, name, args, xheader=None):
+    def create_event(self, data, id):
         """
             创建一个Event对象
         :param name:
@@ -288,44 +222,33 @@ class Events(object):
         :param xheader:
         :return:
         """
-        xheader = {} if xheader is None else xheader
-        event = Event(name, args, context=self._context)
-
-        # 跳过zmqid
-        for k, v in xheader.items():
-            if k == 'zmqid':
-                continue
-            event.header[k] = v
+        event = Event(data, id)
         return event
 
-    def emit_event(self, event, identity=None):
+    def emit_event(self, event, id=None):
         """
         发送Event
         :param event:
-        :param identity:
+        :param id:
         :return:
         """
-        if identity is not None:
+        if id is not None:
             # 带有identity的情况
-            parts = list(identity)
-            parts.extend(['', event.pack()])
+            parts = list(id)
+            parts.extend(['', event.data])
 
         elif self._zmq_socket_type in (zmq.DEALER, zmq.ROUTER):
             # 都以: REQ为标准，数据统一处理为: ("", data)
-            parts = ('', event.pack())
+            parts = ('', event.data)
         else:
 
             # 其他的type?
-            parts = (event.pack(),)
+            parts = (event.data,)
         self._send(parts)
 
-    def emit(self, name, args, xheader=None):
-        xheader = {} if xheader is None else xheader
-        event = self.create_event(name, args, xheader)
-
-        identity = xheader.get('zmqid', None)
-
-        return self.emit_event(event, identity)
+    def emit(self, data, id):
+        event = self.create_event(data, id)
+        return self.emit_event(event, id)
 
     def recv(self):
         # 读取用户请求
@@ -336,9 +259,8 @@ class Events(object):
         else:
             identity = parts[0:-2]
             blob = parts[-1]
-        event = Event.unpack(blob)
-        if identity is not None:
-            event.header['zmqid'] = identity
+
+        event = Event(blob, identity)
         return event
 
     def setsockopt(self, *args):
@@ -357,42 +279,3 @@ def get_stack_info():
         func_name = func_name.replace("/System/Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/", "")
         results.append(func_name)
     return "\n".join(results)
-
-
-class WrappedEvents(object):
-    """
-        在event的基础上再做一个封装
-    """
-    def __init__(self, channel):
-        self._channel = channel
-
-    def close(self):
-        pass
-
-    @property
-    def recv_is_available(self):
-        return self._channel.recv_is_available
-
-    def create_event(self, name, args, xheader=None):
-        xheader = {} if xheader is None else xheader
-        event = Event(name, args, self._channel.context)
-        event.header.update(xheader)
-        return event
-
-    def emit_event(self, event, identity=None):
-        event_payload = (event.header, event.name, event.args)
-        wrapper_event = self._channel.create_event('w', event_payload)
-        self._channel.emit_event(wrapper_event)
-
-    def emit(self, name, args, xheader=None):
-        wrapper_event = self.create_event(name, args, xheader)
-        self.emit_event(wrapper_event)
-
-    def recv(self, timeout=None):
-        wrapper_event = self._channel.recv()
-        (header, name, args) = wrapper_event.args
-        return Event(name, args, None, header)
-
-    @property
-    def context(self):
-        return self._channel.context
