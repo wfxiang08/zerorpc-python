@@ -91,7 +91,7 @@ class Server(SocketBase, ServerBase):
         Server是如何实现的
         主要是API, 如何将ServerBase的框架和Methods等结合起来
     """
-    def __init__(self, processor=None, context=None, pool_size=None):
+    def __init__(self, processor=None, context=None, pool_size=5):
         SocketBase.__init__(self, zmq.ROUTER, context)
         ServerBase.__init__(self, self._events, processor, context, pool_size)
 

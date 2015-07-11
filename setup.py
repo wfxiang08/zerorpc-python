@@ -14,7 +14,7 @@ except ImportError:
 
 requirements = [
     'gevent>=1.0',
-    'pyzmq==13.1.0'
+    'pyzmq==13.1.0',
     'thrift==0.9.2',
 ]
 if sys.version_info < (2, 7):

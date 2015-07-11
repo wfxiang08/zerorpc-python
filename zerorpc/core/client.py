@@ -5,35 +5,21 @@ from StringIO import StringIO
 
 from thrift.transport.TTransport import CReadableTransport
 from thrift.transport.TTransport import TTransportBase
+import zmq
 
 from zerorpc.core.socket import SocketBase
+
 
 logger = getLogger(__name__)
 
 
-# class TProtocol(SocketBase):
-#
-#     def __init__(self, connect_to=None, context=None, timeout=30):
-#         # DEALER 可以同时接受多个请求?
-#         SocketBase.__init__(self, zmq.DEALER, context=context)
-#         self.context = context
-#         self.timetout = timeout
-#         self.connect_to = connect_to
-#
-#
-#         # 在初始化是创建连接
-#         if connect_to:
-#             self.connect(connect_to)
-#
-#     def close(self):
-#         SocketBase.close(self)
-
-
-
+# 用法
 # socktype = zmq.REQ
-# ctx = zmq.Context()
-# transport = TZmqTransport(ctx, endpoint, socktype)
-# protocol = thrift.protocol.TBinaryProtocol.TBinaryProtocolAccelerated(transport)
+# service = None
+# transport = TZmqTransport(endpoint, socktype, service=service)
+# protocol = thrift.protocol.TBinaryProtocol.TBinaryProtocol(transport)
+#
+# 然后构建Thrift Client
 # client = storage.Storage.Client(protocol)
 # transport.open()
 
@@ -41,11 +27,13 @@ logger = getLogger(__name__)
 
 
 class TZmqTransport(TTransportBase, CReadableTransport, SocketBase):
-    def __init__(self, ctx, endpoint, sock_type): # zmq.DEALER
+    def __init__(self, endpoint, sock_type = zmq.DEALER, ctx = None, service = None): # zmq.DEALER
         SocketBase.__init__(self, sock_type, context=ctx)
+
         self._endpoint = endpoint
         self._wbuf = StringIO()
         self._rbuf = StringIO()
+        self.service = service
 
     def open(self):
         self.connect(self._endpoint)
@@ -70,7 +58,7 @@ class TZmqTransport(TTransportBase, CReadableTransport, SocketBase):
         self._wbuf = StringIO()
 
         # 将Thrift转换成为zeromq
-        self._events.emit(msg) # client似乎没有id
+        self._events.emit(msg, self.service) # client似乎没有id
 
     # Implement the CReadableTransport interface.
     @property
