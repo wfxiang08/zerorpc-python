@@ -24,10 +24,10 @@
 
 # Tell flake8 to ignore this file (otherwise it will complain about import *)
 # flake8: noqa
-from .version import *
-from .exceptions import *
-from .context import *
-from .socket import *
-from .channel import *
-from .events import *
-from .core import *
+from __future__ import absolute_import
+from zerorpc.version import *
+from zerorpc.context import *
+from zerorpc.core.socket import *
+from zerorpc.events import *
+from zerorpc.core.client import *
+from zerorpc.core.server import *

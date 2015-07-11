@@ -108,20 +108,20 @@ class Event(object):
         将name, _args, _header进行打包
     """
 
-    __slots__ = ['_data', '_id']
+    __slots__ = ['_msg', '_id']
 
-    def __init__(self, thrift_data, id=None):
-        self._data = thrift_data
+    def __init__(self, msg, id=None):
+        self._msg = msg
         self._id = id
 
 
     @property
-    def data(self):
-        return self._data
+    def msg(self):
+        return self._msg
 
-    @data.setter
-    def data(self, v):
-        self._data = v
+    @msg.setter
+    def msg(self, v):
+        self._msg = v
 
     @property
     def id(self):
@@ -214,7 +214,7 @@ class Events(object):
             r.append(self._socket.bind(endpoint_))
         return r
 
-    def create_event(self, data, id):
+    def create_event(self, msg, id):
         """
             创建一个Event对象
         :param name:
@@ -222,7 +222,7 @@ class Events(object):
         :param xheader:
         :return:
         """
-        event = Event(data, id)
+        event = Event(msg, id)
         return event
 
     def emit_event(self, event, id=None):
@@ -235,19 +235,19 @@ class Events(object):
         if id is not None:
             # 带有identity的情况
             parts = list(id)
-            parts.extend(['', event.data])
+            parts.extend(['', event.msg])
 
         elif self._zmq_socket_type in (zmq.DEALER, zmq.ROUTER):
             # 都以: REQ为标准，数据统一处理为: ("", data)
-            parts = ('', event.data)
+            parts = ('', event.msg)
         else:
 
             # 其他的type?
-            parts = (event.data,)
+            parts = (event.msg,)
         self._send(parts)
 
-    def emit(self, data, id):
-        event = self.create_event(data, id)
+    def emit(self, msg, id):
+        event = self.create_event(msg, id)
         return self.emit_event(event, id)
 
     def recv(self):
@@ -255,12 +255,12 @@ class Events(object):
         parts = self._recv()
         if len(parts) == 1:
             identity = None
-            blob = parts[0]
+            msg = parts[0]
         else:
             identity = parts[0:-2]
-            blob = parts[-1]
+            msg = parts[-1]
 
-        event = Event(blob, identity)
+        event = Event(msg, identity)
         return event
 
     def setsockopt(self, *args):
