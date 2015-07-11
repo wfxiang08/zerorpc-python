@@ -2,28 +2,18 @@
 from __future__ import  absolute_import
 import logging
 from logging import getLogger
+import time
 
 import gevent.pool
 import gevent.queue
 import gevent.event
 import gevent.local
 import gevent.lock
-
 import thrift
 from thrift.protocol import TBinaryProtocol
-import time
-from zerorpc import events, Events
 
-import zerorpc.gevent_zmq as zmq
-from zerorpc.core.socket import SocketBase
-from zerorpc.context import Context
-
-HEARTBEAT_LIVENESS = 3
-HEARTBEAT_INTERVAL = 1
-INTERVAL_INIT = 1
-INTERVAL_MAX = 32
-
-#  Paranoid Pirate Protocol constants
+from zerothrift import events, Events, HEARTBEAT_LIVENESS, INTERVAL_INIT, INTERVAL_MAX, HEARTBEAT_INTERVAL
+from zerothrift.context import Context
 
 
 logger = getLogger(__name__)
@@ -48,25 +38,20 @@ class Server(object):
         self._acceptor_task = None
 
         if events.mode_ppworker:
-            self.liveness = HEARTBEAT_LIVENESS
-            self.interval = INTERVAL_INIT
+            self._liveness = HEARTBEAT_LIVENESS
+            self._interval = INTERVAL_INIT
             self.heartbeat_at = time.time() + HEARTBEAT_INTERVAL
 
-
-            self._events.create_worker_socket(self.poller)
-
+        self._events.create_worker_socket()
         self.endpoint = None
-        self.resolve = True
 
         # 通过_events来connect, bind服务
     def connect(self, endpoint, resolve=True):
         self.endpoint = endpoint
-        self.resolve = resolve
         return self._events.connect(endpoint, resolve)
 
     def bind(self, endpoint, resolve=True):
         self.endpoint = endpoint
-        self.resolve = resolve
         return self._events.bind(endpoint, resolve)
 
 
@@ -109,33 +94,27 @@ class Server(object):
         #
         while True:
             if events.mode_ppworker:
-                socks = dict(self.poller.poll(HEARTBEAT_INTERVAL * 1000))
-                if socks.get(self._events.socket) == zmq.POLLIN:
-                    event = self._events.recv()
-                    if events.mode_ppworker and len(event.msg) == 1 and event.msg[0] == events.PPP_HEARTBEAT:
-                        self.liveness = HEARTBEAT_LIVENESS
+                event = self._events.poll_event()
+                if event:
+                    if len(event.msg) == 1 and event.msg[0] == events.PPP_HEARTBEAT:
+                        self._liveness = HEARTBEAT_LIVENESS
                     else:
-                        self.liveness = HEARTBEAT_LIVENESS
+                        self._liveness = HEARTBEAT_LIVENESS
                         self._task_pool.spawn(self._handle_request, event)
-                    self.interval = INTERVAL_INIT
+                    self._interval = INTERVAL_INIT
                 else:
                     # timeout(太长时间没有回应)
-                    self.liveness -= 1
-                    if self.liveness == 0:
+                    self._liveness -= 1
+                    if self._liveness == 0:
                         # 反正都没啥事了，等待就等待
-                        time.sleep(self.interval)
+                        time.sleep(self._interval)
 
-                    if self.interval < INTERVAL_MAX:
-                        self.interval *= 2
+                    if self._interval < INTERVAL_MAX:
+                        self._interval *= 2
 
-                    # 重新注册
+                    # 重新注册(恢复正常状态)
                     self._events.reconnect()
-                    self.poller.unregister(worker)
-
-                    worker.setsockopt(zmq.LINGER, 0)
-                    worker.close()
-                    worker = worker_socket(context, poller)
-                    self.liveness = HEARTBEAT_LIVENESS
+                    self._liveness = HEARTBEAT_LIVENESS
             else:
                 event = self._events.recv()
                 self._task_pool.spawn(self._handle_request, event)

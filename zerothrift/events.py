@@ -4,14 +4,18 @@ from __future__ import absolute_import
 import os
 from random import randint
 
-from zerorpc.context import Context
-import zerorpc.gevent_zmq as zmq
+from zerothrift.context import Context
+import zerothrift.gevent_zmq as zmq
 
 
 # 当前的Server是否以 ppworker的模式运行，默认为False
 mode_ppworker = False
 PPP_READY = "\x01"      # Signals worker is ready
 PPP_HEARTBEAT = "\x02"  # Signals worker heartbeat
+HEARTBEAT_LIVENESS = 3
+HEARTBEAT_INTERVAL = 1
+INTERVAL_INIT = 1
+INTERVAL_MAX = 32
 
 class Events(object):
     """
@@ -54,6 +58,17 @@ class Events(object):
 
         self.create_worker_socket()
         self.connect(connection_to)
+
+    def poll_event(self):
+        """
+        检查是否有来自socket的数据, 如果有返回event, 如果没有返回None
+        :return:
+        """
+        socks = dict(self.poller.poll(HEARTBEAT_INTERVAL * 1000))
+        if socks.get(self.socket) == zmq.POLLIN:
+            return self.recv()
+        else:
+            return None
 
 
     @property

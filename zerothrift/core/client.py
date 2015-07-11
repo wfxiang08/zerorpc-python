@@ -6,9 +6,8 @@ from StringIO import StringIO
 from thrift.transport.TTransport import CReadableTransport
 from thrift.transport.TTransport import TTransportBase
 import zmq
-from zerorpc import Events, Context
 
-from zerorpc.core.socket import SocketBase
+from zerothrift import Events, Context
 
 
 logger = getLogger(__name__)

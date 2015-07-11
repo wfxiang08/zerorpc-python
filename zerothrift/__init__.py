@@ -25,9 +25,9 @@
 # Tell flake8 to ignore this file (otherwise it will complain about import *)
 # flake8: noqa
 from __future__ import absolute_import
-from zerorpc.version import *
-from zerorpc.context import *
-from zerorpc.core.socket import *
-from zerorpc.events import *
-from zerorpc.core.client import *
-from zerorpc.core.server import *
+from zerothrift.version import *
+from zerothrift.context import *
+from zerothrift.core.socket import *
+from zerothrift.events import *
+from zerothrift.core.client import *
+from zerothrift.core.server import *
