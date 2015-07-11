@@ -6,6 +6,7 @@ from StringIO import StringIO
 from thrift.transport.TTransport import CReadableTransport
 from thrift.transport.TTransport import TTransportBase
 import zmq
+from zerorpc import Events, Context
 
 from zerorpc.core.socket import SocketBase
 
@@ -25,10 +26,20 @@ logger = getLogger(__name__)
 
 
 
+class TZmqTransport(TTransportBase, CReadableTransport):
+    def close(self):
+        self._events.close()
 
-class TZmqTransport(TTransportBase, CReadableTransport, SocketBase):
+    # 通过_events来connect, bind服务
+    def connect(self, endpoint, resolve=True):
+        return self._events.connect(endpoint, resolve)
+
+    def bind(self, endpoint, resolve=True):
+        return self._events.bind(endpoint, resolve)
+
     def __init__(self, endpoint, sock_type = zmq.DEALER, ctx = None, service = None): # zmq.DEALER
-        SocketBase.__init__(self, sock_type, context=ctx)
+        self._context = ctx or Context.get_instance()   # 获取zeromq context
+        self._events = Events(sock_type, self._context)
 
         self._endpoint = endpoint
         self._wbuf = StringIO()
